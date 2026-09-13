@@ -1,0 +1,31 @@
+// ════════════════════════════════════════════════════
+// SIGNAL DETECT
+// Input 1: Road Line   (dir, lane_name)
+// Input 2: Traffic Signal (signal_state, lane_name)
+// ════════════════════════════════════════════════════
+i@signal_ptnum   = -1;
+i@signal_state   = -1;
+f@dist_to_signal = 9999.0;
+
+// ── 速度連動の検出半径 ────────────────────────────────
+f@search_radius = chf("search_radius");
+if (f@vel > f@max_speed * 0.6) @search_radius = @search_radius * clamp(f@vel / f@max_speed, 1.2, 1.5);
+
+// ── Input 2 から自分と同じlane_nameの信号を1個だけ探す ──
+// lane_nameは車1台につき1本のレーンにしか一致しない前提なので、
+// 全候補を列挙してフィルタするより、属性一致グループの最寄り点を直接引く方が速くて単純。
+int ptnum = nearpoint(2, "@lane_name=" + s@lane_name, @P);
+
+if (ptnum >= 0) {
+    vector signal_pos = point(2, "P", ptnum);
+    vector to_signal  = signal_pos - @P;
+    float  d          = length(to_signal);
+
+    // lane_nameの一致だけでは「前方にあるか」「検出半径内か」は分からないので、ここで判定する
+    if (d < @search_radius && dot(normalize(v@dir), normalize(to_signal)) > 0.5) {
+        i@signal_ptnum   = ptnum;
+        i@signal_state   = point(2, "signal_state", ptnum);
+        f@dist_to_signal = d;
+        f@yellow_remain  = point(2, "yellow_remain", ptnum);
+    }
+}

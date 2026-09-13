@@ -1,0 +1,9 @@
+// ════════════════════════════════════════════════════
+// 追加先: 既存 CONNECT_LANE (SOP)
+// 目的: turn_out を計算しているのに prim に残していないので追加する。
+//       直線レーン側にも turn = "straight" を入れておくこと。
+//       （BAKE CONFLICTS TO LANE より後、GET ATTRIBUTE が読む前に必要）
+// ════════════════════════════════════════════════════
+setprimattrib(0, "turn", prim, turn_out);
+setpointattrib(0, "turn", pt_in,  turn_out);
+setpointattrib(0, "turn", pt_out, turn_out);

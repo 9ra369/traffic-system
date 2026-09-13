@@ -1,0 +1,38 @@
+// ════════════════════════════════════════════════════
+// 追加先: 既存 GET ATTRIBUTE (DOP)
+// road_changed 時のみレーン prim から車へ転写する。
+// 動的文字列を nearpoint に渡しているが road_changed の瞬間だけなので
+// 毎フレームのコストにはならない。
+// 書く: i[]@my_conflicts, v[]@my_conf_pos, s@turn, i@lane_id
+// ════════════════════════════════════════════════════
+if (i@road_changed == 1) {
+    // ... 既存の road_id / next_road 解決 ...
+
+    int cp = nearpoint(1, "@road_id=" + itoa(i@road_id), @P);
+    if (cp >= 0) {
+        int pr[] = pointprims(1, cp);
+        if (len(pr) > 0) {
+            i[]@my_conflicts = prim(1, "cross_lanes", pr[0]);
+            v[]@my_conf_pos  = prim(1, "cross_pos",   pr[0]);
+            s@turn           = prim(1, "turn", pr[0]);
+        }
+    }
+
+    // ★ turn だけは次レーンから先読みする。
+    //   直線レーン上の右折待ち車は turn="straight" のため、
+    //   これが無いと「直進は譲らない」で弾かれ先読みが機能しない
+    if (s@next_road != "") {
+        int np = nearpoint(1, "@road_name=" + s@next_road, @P);
+        if (np >= 0) {
+            int pr2[] = pointprims(1, np);
+            if (len(pr2) > 0) s@turn = prim(1, "turn", pr2[0]);
+        }
+    }
+}
+
+if (i@road_id >= 0) {
+    int pt = nearpoint(1, "@road_id=" + itoa(i@road_id), @P);
+    v@dir     = point(1, "dir",  pt);
+    f@curv    = point(1, "curv", pt);
+    i@lane_id = point(1, "lane_id", pt);   // ★ 追加
+}

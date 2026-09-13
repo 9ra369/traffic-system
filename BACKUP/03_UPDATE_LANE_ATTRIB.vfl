@@ -1,0 +1,85 @@
+// ════════════════════════════════════════════════════
+// Input 1: Road Line  (src_id, dir, curv, turn, next_lanes)
+// Input 3: Pedestrian (歩行者。"cross"グループ点＝直進レーンの交錯点、lane_name一致で引く)
+// ════════════════════════════════════════════════════
+
+// 切り替え直後: 新しい lane_name から src_id を再解決
+// lane_nameは、末端でnext_lane_nameから値を引き継いでいる
+if (i@lane_changed == 1) {
+    int pt = nearpoint(1, "@lane_name=" + s@lane_name, @P);
+    if (pt >= 0) {
+        i@src_id = point(1, "src_id", pt);
+        i@lane_changed = 0;   // 解決できたらオフ
+
+        // ★ この道路の next_lanes を読んで next_lane_name を1回だけ確定
+        //    next_lanes を持つ点(in点)を src_id で探す
+        int inpt = findattribval(1, "point", "src_id", i@src_id);
+        // ここで、このレーンの持つ、次のレーンの候補を取得し、次のレーンを決定
+        if (inpt >= 0) {
+            string nexts[] = point(1, "next_lanes", inpt);
+            int n = len(nexts);
+            if (n == 1) {
+                s@next_lane_name = nexts[0];
+            //次のLaneが複数ある時
+            } else if (n > 1) {
+                int idx = int(rand(@id + i@src_id) * n);  // 車×道路でseed
+                idx = min(idx, n - 1);
+                s@next_lane_name = nexts[idx];
+            } else {
+                s@next_lane_name = "";   // 候補なし(行き止まり等)
+            }
+
+            // ★ M1: 新しいレーンの交錯点情報を作り直す（直進車のみ使う）
+            i@passed             = 0;
+            i@passed_frame_count = 0;
+            v@cross_pos          = {0, 0, 0};
+            // 交錯点はInput 3(歩行者ジオメトリ)の"cross"グループ点。
+            // lane_name一致で1個引く（歩行者のcrossing検索と同じ入力・同じパターン）
+            int cp = nearpoint(3, "cross && @lane_name=" + s@lane_name, @P);
+            if (cp >= 0) {
+                v@cross_pos = point(3, "P", cp);
+            }
+
+            // ★ M2: 右折レーンのcross_linesをキャッシュ（直進レーンでは既定の空配列のまま）
+            //   ※ inptではなくptのprimを見る。src_idはコネクタと行き先の直進レーンで
+            //     同じ値を共有するため、src_id一致検索(findattribval)だと行き先レーン側の
+            //     prim（cross_linesを持たない）を拾ってしまう恐れがある。ptはlane_name一致＋
+            //     現在地に最も近い点なので、今まさに乗っているprim（コネクタなら曲線側）を確実に指す。
+            i[]@cross_lines = {};
+            int pr[] = pointprims(1, pt);
+            if (len(pr) > 0) {
+                i[]@cross_lines = prim(1, "cross_lines", pr[0]);
+            }
+
+            // ★ M5-1: cross_linesと同じ長さ・同じindexで判断ラッチ配列を作り直す
+            //   （右折区間に入り直すたび、前の交差点の状態を引きずらないようゼロから積む）
+            int    n_cross = len(i[]@cross_lines);
+            int    new_decided[]     = {};
+            int    new_target_id[]   = {};
+            int    new_target_lock[] = {};
+            vector new_target_cp[]   = {};
+            for (int ci = 0; ci < n_cross; ci++) {
+                append(new_decided,     0);
+                append(new_target_id,   -1);
+                append(new_target_lock, 0);
+                append(new_target_cp,   {0, 0, 0});
+            }
+            i[]@rt_decided     = new_decided;
+            i[]@rt_target_id   = new_target_id;
+            i[]@rt_target_lock = new_target_lock;
+            v[]@rt_target_cp   = new_target_cp;
+        }
+    }
+}
+
+// road_changeしてない時、
+if (i@src_id >= 0) {
+    int pt = nearpoint(1, "@src_id=" + itoa(i@src_id), @P);
+    if (pt >= 0) {
+        v@dir     = point(1, "dir",  pt);
+        f@curv    = point(1, "curv", pt);
+        s@turn    = point(1, "turn", pt);      // ★ コネクタ上でなければ既定値("")のまま＝直進扱い
+        i@lane_id = point(1, "lane_id", pt);   // ★ M2: cross_linesとの照合用
+    }
+    // pt < 0 のとき（src_idは有効だが一致点が見つからない）は前フレームのdir/curv/turn/lane_idを維持する
+}

@@ -1,0 +1,21 @@
+f@dt = @TimeInc;
+if (i@car_state == 2) {
+    f@vel = 0.0;
+    @v    = {0, 0, 0};
+} else {
+    // curvature(0-1に正規化済み)から曲がり用の速度上限を作る
+    // curv=0 → max_speed, curv=1 → min_curve_speed
+    float curve_limit = fit(f@curv, 0, 1, f@max_speed, chf("min_curve_speed"));
+
+    // 右折時はさらに速度上限をかける（対向車確認のため、curvが緩くても徐行させる）
+    float turn_limit = (s@turn == "right") ? chf("right_turn_speed") : f@max_speed;
+
+    // 通常の加速度で速度更新
+    f@vel += f@accel * @dt;
+
+    // 上限は max_speed / curve_limit / turn_limit のうち一番小さいもの
+    f@vel = clamp(f@vel, 0.0, min(f@max_speed, min(curve_limit, turn_limit)));
+
+    @v  = v@dir * f@vel;
+    @P += @v * @dt;
+}

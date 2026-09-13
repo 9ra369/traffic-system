@@ -1,0 +1,770 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>右折 vs 直進 コンフリクト解決 — モックアップ</title>
+<style>
+  :root{
+    --bg:#0a0e15;
+    --asphalt:#111826;
+    --panel:#0f1521;
+    --panel-2:#141c2b;
+    --line:#233145;
+    --line-soft:#1a2333;
+    --ink:#dde6f2;
+    --muted:#8090a6;
+    --faint:#5a6a82;
+    --ego:#ffb02e;        /* 右折車 */
+    --straight:#3fc6f2;   /* 直進車（優先） */
+    --cp:#e070f0;         /* 交点 cp */
+    --stop:#ff5b5b;
+    --decel:#ff9a3d;
+    --clear:#46dd9c;
+    --watch:#7d90ab;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:
+      radial-gradient(1200px 700px at 78% -10%, #131b2b 0%, transparent 60%),
+      var(--bg);
+    color:var(--ink);
+    font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    line-height:1.45;
+  }
+  .mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,"Roboto Mono",monospace}
+
+  .app{
+    display:grid;
+    grid-template-columns:minmax(0,1fr) 360px;
+    gap:18px;
+    max-width:1320px;
+    margin:0 auto;
+    padding:20px clamp(14px,3vw,28px) 40px;
+    min-height:100%;
+  }
+  header.head{grid-column:1 / -1; display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; margin-bottom:2px}
+  .title{font-size:19px; font-weight:650; letter-spacing:.2px}
+  .title b{color:var(--ego); font-weight:650}
+  .title i{color:var(--straight); font-style:normal; font-weight:650}
+  .sub{color:var(--muted); font-size:13px}
+
+  /* stage */
+  .stage-wrap{
+    position:relative;
+    background:linear-gradient(180deg,#0d1420,#0a1019);
+    border:1px solid var(--line);
+    border-radius:14px;
+    overflow:hidden;
+    min-height:420px;
+  }
+  canvas{display:block; width:100%; height:100%; touch-action:none}
+  .overlay{
+    position:absolute; left:14px; top:12px;
+    display:flex; gap:8px; flex-wrap:wrap; align-items:center;
+    pointer-events:none;
+  }
+  .state-badge{
+    pointer-events:none;
+    display:inline-flex; align-items:center; gap:9px;
+    padding:8px 14px; border-radius:999px;
+    background:rgba(10,15,24,.72); border:1px solid var(--line);
+    backdrop-filter:blur(6px);
+    font-size:13px; font-weight:600; letter-spacing:.2px;
+  }
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--watch);box-shadow:0 0 12px currentColor;color:var(--watch)}
+  .legend{
+    position:absolute; right:12px; bottom:12px;
+    display:flex; flex-direction:column; gap:5px;
+    background:rgba(10,15,24,.66); border:1px solid var(--line-soft);
+    border-radius:10px; padding:9px 11px; font-size:11.5px; color:var(--muted);
+    pointer-events:none;
+  }
+  .legend span{display:inline-flex;align-items:center;gap:7px}
+  .swatch{width:16px;height:6px;border-radius:2px;display:inline-block}
+
+  /* panel */
+  .panel{display:flex; flex-direction:column; gap:14px; min-width:0}
+  .card{
+    background:linear-gradient(180deg,var(--panel-2),var(--panel));
+    border:1px solid var(--line);
+    border-radius:12px;
+    padding:14px 15px;
+  }
+  .card h2{
+    margin:0 0 12px; font-size:12px; font-weight:600; letter-spacing:.6px;
+    color:var(--faint); text-transform:uppercase;
+    display:flex; align-items:center; gap:8px;
+  }
+  .card h2 .k{color:var(--muted)}
+
+  /* telemetry */
+  .tele-top{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px}
+  .stat{background:#0b1220; border:1px solid var(--line-soft); border-radius:9px; padding:9px 11px}
+  .stat .lab{font-size:10.5px; color:var(--faint); letter-spacing:.3px}
+  .stat .val{font-size:19px; font-weight:600; margin-top:1px}
+  .stat .val small{font-size:11px; color:var(--muted); font-weight:500; margin-left:3px}
+
+  .bars .row{display:flex; align-items:center; gap:9px; margin:7px 0}
+  .bars .name{width:74px; font-size:12px; color:var(--muted); flex:none}
+  .bars .track{flex:1; height:14px; background:#0b1220; border-radius:7px; position:relative; overflow:hidden; border:1px solid var(--line-soft)}
+  .bars .fill{position:absolute; left:0; top:0; bottom:0; border-radius:7px; transition:width .12s linear}
+  .bars .num{width:52px; text-align:right; font-size:12px}
+  .gapmark{position:absolute; top:-3px; bottom:-3px; width:2px; background:var(--stop); opacity:.85}
+  .ddout{margin-top:8px; padding:8px 10px; background:#0b1220; border:1px solid var(--line-soft); border-radius:8px; font-size:12px; color:var(--muted)}
+  .ddout b{color:var(--ink)}
+  .verdict{margin-top:9px; font-size:12.5px; color:var(--muted); height:18px; line-height:18px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .verdict b{color:var(--ink)}
+
+  /* car list */
+  table.cars{width:100%; border-collapse:collapse; font-size:12px}
+  table.cars th{color:var(--faint); font-weight:500; text-align:right; padding:4px 6px; font-size:10.5px; letter-spacing:.3px}
+  table.cars th:first-child{text-align:left}
+  table.cars td{padding:5px 6px; text-align:right; border-top:1px solid var(--line-soft)}
+  table.cars td:first-child{text-align:left; color:var(--muted)}
+  table.cars thead th{position:sticky; top:0; background:var(--panel-2); z-index:1}
+
+  /* collapsible + fixed-height list (row count changes never reflow siblings) */
+  .card.collapsible > h2{cursor:pointer; user-select:none}
+  .card.collapsible.collapsed > h2{margin-bottom:0}
+  .chev{margin-left:auto; color:var(--faint); font-size:11px; transition:transform .15s; line-height:1}
+  .collapsed .chev{transform:rotate(-90deg)}
+  .cars-scroll{height:158px; overflow-y:auto; overflow-x:hidden; margin-right:-4px; padding-right:4px}
+  .collapsed .cars-scroll{display:none}
+  .cars-scroll::-webkit-scrollbar{width:8px}
+  .cars-scroll::-webkit-scrollbar-thumb{background:var(--line); border-radius:8px}
+  .pill{display:inline-block; padding:1px 7px; border-radius:6px; font-size:10.5px; font-weight:600}
+  .pill.in{background:rgba(63,198,242,.15); color:var(--straight)}
+  .pill.out{background:#0b1220; color:var(--faint)}
+  .pill.blk{background:rgba(255,91,91,.16); color:var(--stop)}
+  .empty{color:var(--faint); font-size:12px; padding:8px 2px}
+
+  /* controls */
+  .ctrl{margin:11px 0}
+  .ctrl:first-of-type{margin-top:2px}
+  .ctrl label{display:flex; justify-content:space-between; align-items:baseline; font-size:12.5px; margin-bottom:5px}
+  .ctrl label .v{color:var(--ego); font-weight:600}
+  input[type=range]{width:100%; -webkit-appearance:none; appearance:none; height:4px; border-radius:3px; background:var(--line); outline:none}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:16px;height:16px;border-radius:50%;background:var(--ego);cursor:pointer;border:2px solid #1a1206;box-shadow:0 1px 4px rgba(0,0,0,.5)}
+  input[type=range]::-moz-range-thumb{width:16px;height:16px;border:2px solid #1a1206;border-radius:50%;background:var(--ego);cursor:pointer}
+  input[type=range].sim::-webkit-slider-thumb{background:var(--straight);border-color:#04222c}
+  input[type=range].sim::-moz-range-thumb{background:var(--straight);border-color:#04222c}
+
+  .btns{display:flex; gap:8px; flex-wrap:wrap; margin-top:4px}
+  button{
+    font:inherit; font-size:12.5px; font-weight:600; color:var(--ink);
+    background:#182236; border:1px solid var(--line); border-radius:8px;
+    padding:8px 12px; cursor:pointer; flex:1; min-width:92px;
+  }
+  button:hover{background:#1e2a41; border-color:#33455f}
+  button:active{transform:translateY(1px)}
+  button.primary{background:var(--ego); color:#20160a; border-color:transparent}
+  button.primary:hover{background:#ffbe52}
+
+  .toggle{display:flex; align-items:center; justify-content:space-between; font-size:12.5px; padding:6px 0}
+  .switch{position:relative; width:38px; height:22px; flex:none}
+  .switch input{opacity:0; width:0; height:0}
+  .slider{position:absolute; inset:0; background:#1b2536; border-radius:22px; transition:.15s; border:1px solid var(--line)}
+  .slider:before{content:"";position:absolute; width:15px;height:15px; left:3px; top:3px; background:var(--faint); border-radius:50%; transition:.15s}
+  .switch input:checked + .slider{background:rgba(63,198,242,.25); border-color:var(--straight)}
+  .switch input:checked + .slider:before{transform:translateX(16px); background:var(--straight)}
+
+  .foot{grid-column:1 / -1; color:var(--faint); font-size:11.5px; margin-top:2px; line-height:1.7}
+  .foot code{color:var(--muted); background:#0d1420; padding:1px 5px; border-radius:4px; font-size:11px}
+
+  @media (max-width:920px){
+    .app{grid-template-columns:1fr}
+    .stage-wrap{min-height:56vh}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="head">
+    <div class="title"><b>右折車</b>が <i>直進車</i> を譲る — 検索コーン＋到達時間方式</div>
+    <div class="sub">上から見た交差点。優先は 直進 ＞ 右折。右折車が交点 cp への到達時間を比べて 進行 / 減速 / 停止 を決める。</div>
+  </header>
+
+  <!-- STAGE -->
+  <div class="stage-wrap">
+    <canvas id="cv"></canvas>
+    <div class="overlay">
+      <div class="state-badge"><span class="dot" id="stDot"></span><span id="stText">走行中</span></div>
+    </div>
+    <div class="legend">
+      <span><i class="swatch" style="background:var(--ego)"></i>右折車（自車）</span>
+      <span><i class="swatch" style="background:var(--straight)"></i>直進車（優先）</span>
+      <span><i class="swatch" style="background:var(--cp)"></i>交点 cp</span>
+      <span><i class="swatch" style="background:var(--stop)"></i>停止リング / <i class="swatch" style="background:var(--decel)"></i>減速リング</span>
+    </div>
+  </div>
+
+  <!-- PANEL -->
+  <div class="panel">
+
+    <div class="card">
+      <h2>自車テレメトリ <span class="k mono" id="clk"></span></h2>
+      <div class="tele-top">
+        <div class="stat"><div class="lab">速度 vel</div><div class="val mono"><span id="mVel">0.0</span><small>m/s</small></div></div>
+        <div class="stat"><div class="lab">交点まで dist(cp)</div><div class="val mono"><span id="mDist">0.0</span><small>m</small></div></div>
+      </div>
+      <div class="bars">
+        <div class="row"><div class="name">t_self</div><div class="track"><div class="fill" id="bSelf" style="background:var(--ego)"></div></div><div class="num mono" id="nSelf">–</div></div>
+        <div class="row"><div class="name">t_other</div><div class="track"><div class="fill" id="bOther" style="background:var(--straight)"></div><div class="gapmark" id="gap"></div></div><div class="num mono" id="nOther">–</div></div>
+        <div class="verdict" id="verdict">対象の直進車なし。そのまま進行できる。</div>
+      </div>
+    </div>
+
+    <div class="card collapsible" id="carsCard">
+      <h2 id="carsHead">検出中の直進車 <span class="chev">▾</span></h2>
+      <div class="cars-scroll">
+        <table class="cars" id="carsTbl">
+          <thead><tr><th>車</th><th>dot</th><th>t_other</th><th>判定</th></tr></thead>
+          <tbody id="carsBody"></tbody>
+        </table>
+        <div class="empty" id="carsEmpty">近傍に直進車はいない</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>判定パラメータ <span class="k">（チューニング対象）</span></h2>
+      <div class="ctrl"><label>到達時間しきい値 <span>これ未満で停止(s)</span><span class="v mono" id="lTtc">3.5</span></label><input type="range" id="pTtc" min="1" max="6" step="0.1" value="3.5"></div>
+      <div class="ctrl"><label>検索コーン下限 <span>dot 最小</span><span class="v mono" id="lLo">-1.00</span></label><input type="range" id="pLo" min="-1" max="0.1" step="0.02" value="-1.0"></div>
+      <div class="ctrl"><label>検索コーン上限 <span>dot 最大</span><span class="v mono" id="lHi">0.14</span></label><input type="range" id="pHi" min="-0.2" max="0.6" step="0.02" value="0.14"></div>
+      <div class="ctrl"><label>前方判定 <span>dot(dir,V) 下限</span><span class="v mono" id="lFwd">0.50</span></label><input type="range" id="pFwd" min="0" max="1" step="0.05" value="0.5"></div>
+      <div class="ctrl"><label>stop_dist <span>停止距離</span><span class="v mono" id="lStop">5.5</span></label><input type="range" id="pStop" min="1" max="10" step="0.5" value="5.5"></div>
+      <div class="ctrl"><label>decel_dist <span>減速距離</span><span class="v mono" id="lDec">12.0</span></label><input type="range" id="pDec" min="4" max="18" step="0.5" value="12"></div>
+      <div class="ctrl"><label>停止線マージン <span>cp手前で必ず停止(m)</span><span class="v mono" id="lSm">1.5</span></label><input type="range" id="pSm" min="0.5" max="6" step="0.5" value="1.5"></div>
+      <div class="ctrl"><label>v_floor <span>最低想定速度</span><span class="v mono" id="lVf">1.5</span></label><input type="range" id="pVf" min="0.5" max="6" step="0.5" value="1.5"></div>
+      <div class="ctrl"><label>快適減速 <span>減速ゾーン (m/s²)</span><span class="v mono" id="lAc">2.5</span></label><input type="range" id="pAc" min="0.5" max="5" step="0.1" value="2.5"></div>
+      <div class="ctrl"><label>緊急減速 <span>停止ゾーン (m/s²)</span><span class="v mono" id="lAe">6.0</span></label><input type="range" id="pAe" min="2" max="9" step="0.5" value="6.0"></div>
+      <div class="ctrl"><label>加速度 <span>発進・巡航復帰 (m/s²)</span><span class="v mono" id="lAa">3.0</span></label><input type="range" id="pAa" min="1" max="6" step="0.5" value="3.0"></div>
+      <div class="ctrl"><label>search_radius <span>近傍検索半径</span><span class="v mono" id="lSr">25</span></label><input type="range" id="pSr" min="6" max="33" step="1" value="25"></div>
+      <div class="toggle"><span>直進車の防御運転（減速・停止）</span>
+        <label class="switch"><input type="checkbox" id="tSafe" checked><span class="slider"></span></label></div>
+      <div id="smWrap">
+        <div class="ctrl"><label>前方判定 <span>dot(dir, →右折車) 下限</span><span class="v mono" id="lSfwd">0.65</span></label><input type="range" id="pSfwd" min="0" max="1" step="0.05" value="0.65"></div>
+        <div class="ctrl"><label>減速距離 <span>右折車まで(m)</span><span class="v mono" id="lSdec">9.0</span></label><input type="range" id="pSdec" min="3" max="16" step="0.5" value="9"></div>
+        <div class="ctrl"><label>停止距離 <span>右折車まで(m)</span><span class="v mono" id="lSstp">5.0</span></label><input type="range" id="pSstp" min="1" max="10" step="0.5" value="5"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>シミュレーション</h2>
+      <div class="ctrl"><label>直進車の速度<span class="v mono" id="lSs">7.0</span></label><input type="range" class="sim" id="pSs" min="2" max="14" step="0.5" value="7"></div>
+      <div class="ctrl"><label>直進車の発生間隔<span class="v mono" id="lInt">3.7</span></label><input type="range" class="sim" id="pInt" min="0.8" max="6" step="0.1" value="3.7"></div>
+      <div class="ctrl"><label>右折車の巡航速度<span class="v mono" id="lCr">6.0</span></label><input type="range" class="sim" id="pCr" min="2" max="10" step="0.5" value="6"></div>
+      <div class="ctrl"><label>右折中の徐速係数 <span>巡航×</span><span class="v mono" id="lTc">0.65</span></label><input type="range" class="sim" id="pTc" min="0.3" max="1" step="0.05" value="0.65"></div>
+      <div class="ctrl"><label>再生速度<span class="v mono" id="lSp">1.0×</span></label><input type="range" class="sim" id="pSp" min="0.2" max="2.5" step="0.1" value="1"></div>
+      <div class="btns">
+        <button id="bPause" class="primary">一時停止</button>
+        <button id="bSpawn">直進車を出す</button>
+        <button id="bReset">リセット</button>
+      </div>
+      <div class="toggle" style="margin-top:8px"><span>検出ライン／コーン情報を表示</span>
+        <label class="switch"><input type="checkbox" id="tLines" checked><span class="slider"></span></label></div>
+    </div>
+
+  </div>
+
+  <div class="foot">
+    右折車は右折開始時に「交錯する直進レーンの <code>{lane_id, cp}</code>」を1回だけ取得してキャッシュ（本モックでは cp=固定点）。右折開始後、直進車ごとに
+    <code>dot(normalize(other.P − self.P), other.dir)</code> でコーン内かを粗くフィルタし、コーン内の車について相手の到達時間
+    <code>t_other = dist(cp, other.P) / other.vel</code>（＝交点まで何秒か）を求める。<b>コーン内に <code>t_other</code> が到達時間しきい値（既定 3.5s）未満の車が現れた瞬間に「停止(yield)」を確定</b>し、以後は保持する（自動では「進行」に戻さない＝安全側は勝手に緩めない）。まだ何も確定していなければコーン内の車の有無で「進行(go)」も確定するが、<b>goの後で新たに危険な車（<code>t_other</code> が閾値未満）が現れたら即座に yield へ昇格</b>する。判断そのものは「通過してない・検索半径内の直進車が1台もいなくなる」までは保持し、コーンの出入りだけでは消さない（自分の向きの回転などによる一瞬のブレで、止まって譲っている最中に進み出してまた止まる、を防ぐ）。停止と決めたら cp までの残り距離に応じて減速・停止する。
+  </div>
+</div>
+
+<script>
+"use strict";
+// ---------- vec ----------
+const sub=(a,b)=>({x:a.x-b.x,y:a.y-b.y});
+const add=(a,b)=>({x:a.x+b.x,y:a.y+b.y});
+const mul=(a,s)=>({x:a.x*s,y:a.y*s});
+const len=v=>Math.hypot(v.x,v.y);
+const norm=v=>{const l=len(v)||1;return{x:v.x/l,y:v.y/l};};
+const dot=(a,b)=>a.x*b.x+a.y*b.y;
+const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+// ---------- world constants ----------
+const STRAIGHT_X=-3;     // 直進（優先）レーン中心
+const EGO_APPROACH_X=3;  // 右折車の進入レーン
+const ROAD_HALF=6.5;     // 道路半幅
+const WORLD=33;          // 表示半径(m)
+
+// ---------- ego path (approach up -> left turn -> exit left) ----------
+function buildPath(){
+  const pts=[];
+  for(let y=30;y>=6;y-=0.25) pts.push({x:EGO_APPROACH_X,y});
+  const Cc={x:-6,y:6}, R=9;
+  for(let d=0;d<=90;d+=1){const a=d*Math.PI/180; pts.push({x:Cc.x+R*Math.cos(a), y:Cc.y-R*Math.sin(a)});}
+  for(let x=-6;x>=-33;x-=0.25) pts.push({x,y:-3});
+  return pts;
+}
+const PATH=buildPath();
+const CUM=[0];
+for(let i=1;i<PATH.length;i++) CUM.push(CUM[i-1]+dist(PATH[i-1],PATH[i]));
+const TOTAL=CUM[CUM.length-1];
+function posAt(s){
+  s=clamp(s,0,TOTAL);
+  let i=1; while(i<CUM.length && CUM[i]<s) i++;
+  const seg=(CUM[i]-CUM[i-1])||1;
+  const t=(s-CUM[i-1])/seg;
+  const P={x:PATH[i-1].x+(PATH[i].x-PATH[i-1].x)*t, y:PATH[i-1].y+(PATH[i].y-PATH[i-1].y)*t};
+  const dir=norm(sub(PATH[i],PATH[i-1]));
+  return {P,dir};
+}
+// cp = crossing x = STRAIGHT_X, plus its arc length
+let CP=null, CP_S=0;
+for(let i=1;i<PATH.length;i++){
+  const a=PATH[i-1].x-STRAIGHT_X, b=PATH[i].x-STRAIGHT_X;
+  if(a*b<=0){
+    const t=(STRAIGHT_X-PATH[i-1].x)/((PATH[i].x-PATH[i-1].x)||1);
+    CP={x:STRAIGHT_X, y:PATH[i-1].y+(PATH[i].y-PATH[i-1].y)*t};
+    CP_S=CUM[i-1]+t*(CUM[i]-CUM[i-1]);
+    break;
+  }
+}
+// turn start = where the path leaves the straight approach and begins curving
+let TURN_START_S=0;
+for(let i=1;i<PATH.length;i++){ if(PATH[i].x < EGO_APPROACH_X-1e-6){ TURN_START_S=CUM[i-1]; break; } }
+
+// ---------- params ----------
+const P={
+  decideTTC:3.5, coneLo:-0.8, coneHi:0.1, fwdMin:0.5,
+  a_accel:3.0, a_comfort:2.5, a_emergency:6.0, stopMargin:1.5,
+  stop_dist:5.5, decel_dist:12.0, v_floor:1.5, searchRadius:25,
+  safeOn:false, strFwdMin:0.65, strDecel:9, strStop:5,
+  straightSpeed:7, spawnInt:2.2, cruise:6, simSpeed:1,
+  showLines:true, hurry:1.15, turnCreep:0.65,
+};
+
+// ---------- state ----------
+const ego={s:0, vel:6, state:'cruise', restTimer:0, ahead_intersect:0, decided:null};
+let cars=[];   // {x,y,vel,base,slow}
+let spawnTimer=0;
+let paused=false;
+let simTime=0;
+let carId=0;
+
+function resetEgo(){
+  ego.s=0; ego.vel=P.cruise; ego.state='cruise'; ego.restTimer=0; ego.ahead_intersect=0; ego.decided=null;
+  for(const c of cars){ c.seenByEgo=false; c.blockingEgo=false; }   // 新しいターン開始 → 各車の判定をやり直す
+}
+P.safeOn=true;   // 直進車の防御運転を既定でON（画像の設定）
+function fullReset(){ cars=[]; spawnTimer=0.5; simTime=0; resetEgo(); }
+
+function spawnCar(vel){
+  cars.push({id:++carId, x:STRAIGHT_X, y:-30, vel:vel!=null?vel:P.straightSpeed*(0.85+Math.random()*0.3), slow:1, ahead_intersect:0, halt:false,
+    seenByEgo:false, blockingEgo:false});   // 右折車からコーン内に初めて見えた瞬間のTTCで1回だけ確定し、以後は保持
+}
+
+// ---------- per-frame logic ----------
+let detected=[]; // for readout
+function step(dt){
+  simTime+=dt;
+  // spawn straight cars
+  spawnTimer-=dt;
+  if(spawnTimer<=0){ spawnCar(); spawnTimer=P.spawnInt*(0.8+Math.random()*0.4); }
+  // move straight cars
+  for(const c of cars){
+    c.halt=false; c.decel=false;
+    c.y += c.vel*c.slow*dt; c.slow=Math.min(1,c.slow+dt*0.8);
+    c.ahead_intersect = (c.y > CP.y) ? 1 : 0;   // 交点(cp)を直進レーン上で通過したか
+  }
+  cars=cars.filter(c=>c.y<33);
+
+  // ego respawn loop
+  if(ego.s>=TOTAL){
+    ego.restTimer-=dt;
+    if(ego.restTimer<=0) resetEgo();
+    const end=posAt(ego.s);
+    detected=[]; render._self=end.P; render._dir=end.dir;
+    render._dCp=dist(end.P,CP); render._afterCp=true;
+    render._critical=null; render._tSelf=null; render._blocked=false; render._turning=false;
+    render._stopD=0; render._decelD=0;
+    return;
+  }
+
+  const {P:sp, dir:sdir}=posAt(ego.s);
+  const dCp=dist(sp,CP);
+  const afterCp = ego.s>CP_S+0.5;
+  ego.ahead_intersect = ego.s > CP_S ? 1 : 0;   // 右折車が交点を通過したか
+
+  // ---- right-turn car detection (右折を開始してから。直進の進入区間では検知しない) ----
+  const turning = ego.s >= TURN_START_S;
+  detected=[];
+  let blocked=false, critical=null;
+  let anyCandidate=false;   // 通過してない・半径内にいる車が1台でもいるか（判断を"保持"する根拠。コーン/前方判定より緩い条件）
+  const velAssumed=Math.max(ego.vel, P.v_floor);
+  const t_self = dCp/velAssumed;
+  let hasSeen=false;
+  if(turning && !afterCp){
+    for(const c of cars){
+      if(c.ahead_intersect===1) continue;     // 交点を通過済み → 対象外（判定もここで終わり）
+      const other={P:{x:c.x,y:c.y}, dir:{x:0,y:1}, vel:c.vel};
+      const V=sub(other.P, sp);
+      const d=len(V);
+      if(d > P.searchRadius) continue;        // 近傍検索でヒットしない
+      anyCandidate=true;                      // ここまでの条件（未通過・半径内）だけで候補あり扱い
+      const fwdOk = dot(sdir, norm(V)) >= P.fwdMin;   // 自分の前方にいる車だけ（後方を除外）
+      const cone=dot(norm(V), other.dir);
+      const inCone = fwdOk && cone>=P.coneLo && cone<=P.coneHi;
+      const t_other = dist(CP,other.P)/Math.max(other.vel,P.v_floor);
+      // コーンに初めて入った瞬間のTTCで blocking を1回だけ確定し、以後は保持する。
+      // （毎フレーム再計算すると、近づくにつれ勝手にTTCが減っていく既知の車まで
+      //   "新しい危険な車が現れた"と誤認して、進んでは止まる…を繰り返してしまう）
+      if(inCone && !c.seenByEgo){ c.seenByEgo=true; c.blockingEgo = (t_other < P.decideTTC); }
+      const blk = c.seenByEgo && c.blockingEgo;
+      if(c.seenByEgo){ hasSeen=true; if(blk) blocked=true; }
+      detected.push({id:c.id, dist:d, cone, inCone, t_other, blk});
+      // choose critical = blocking with min t_other, else nearest in-cone
+      if(blk){ if(!critical || !critical.blk || t_other<critical.t_other) critical={blk:true,t_other,cone}; }
+      else if(inCone && (!critical || (!critical.blk && d<critical.dist))) critical={blk:false,t_other,cone,dist:d};
+    }
+  }
+
+  // ---- decision & reaction ----
+  const creepV = P.cruise*P.turnCreep;
+  // 判断は「通過してない・検索半径内の車が1台もいなくなる」までは保持する。
+  // コーン／前方判定は自分の向き(dir)がカーブ中に回転するため一瞬だけ外れることがあり、
+  // それだけでリセットすると「止まって譲っている最中に一瞬進み出してまた止まる」揺れが出る → anyCandidateで緩く保持。
+  if(!turning || afterCp || !anyCandidate){
+    ego.decided=null;                               // 周囲に対象車が本当にいなくなった → リセット
+  } else if(ego.decided===null){
+    if(hasSeen) ego.decided = blocked ? 'yield' : 'go';   // 初回検知で確定
+  } else if(ego.decided==='go' && blocked){
+    ego.decided='yield';                            // 本当に新しく見えた車がブロック判定なら即座に昇格（安全側への切替はいつでも許可）
+  }
+  // 停止線(cp手前)を越えてしまったら、もう止まらず通過する（交錯点に居座らない）。
+  // 動いて抜ければ、向かってくる直進車が止まってくれる。
+  // （yieldはここ以外では自動でgoに戻さない＝安全側は勝手に緩めない）
+  const STOP_LINE_S = CP_S - P.stopMargin;
+  if(ego.decided==='yield' && ego.s >= STOP_LINE_S){ ego.decided='go'; }
+
+  let target=P.cruise, state, brakeA=P.a_comfort;
+  if(!turning){ state='approach'; target=P.cruise; }        // 直進進入：全速、検知なし
+  else if(afterCp){ state='clear'; target=P.cruise; }        // 交点通過後：巡航に戻す
+  else if(ego.decided==='yield'){                            // 譲ると確定 → 交点手前で確実に停止
+    if(dCp<P.stop_dist){ state='stop'; target=0; brakeA=P.a_emergency; }   // 停止ゾーン：緊急減速
+    else if(dCp<P.decel_dist){ state='decel'; target=P.cruise*0.28; brakeA=P.a_comfort; } // 減速ゾーン：快適減速
+    else { state='watch'; target=creepV; }
+  } else if(ego.decided==='go'){ state='turn'; target=creepV; }  // 行くと確定 → 徐速で通過（絶対に止まらない）
+  else { state='turn'; target=creepV; }                      // 未判断（コーン内に車なし）→ 徐速で接近
+  ego.state=state;
+
+  // integrate velocity toward target — 減速はブレーキ設定(a_comfort / a_emergency)で行う
+  const accel = P.a_accel;
+  const dv=target-ego.vel;
+  const a_use = dv>=0 ? accel : brakeA;
+  ego.vel += Math.sign(dv)*Math.min(a_use*dt, Math.abs(dv));
+  ego.vel=Math.max(0,ego.vel);
+  ego.s += ego.vel*dt;
+
+  if(ego.s>=TOTAL){ ego.s=TOTAL; ego.restTimer=1.1; }
+
+  // ---- straight car defensive behavior ----
+  // 直進車は「右折車がこっちに向かってきているか」だけで判断する:
+  //   前方にいる (fwd) かつ 実際に動いて近づいている (moving)。
+  //   譲って停止・減速中の右折車は"向かってきていない"ので反応しない（膠着も防ぐ）。
+  if(P.safeOn && ego.ahead_intersect!==1){
+    const egoComing = ego.vel > 0.5;                 // 動いている＝向かってきている
+    for(const c of cars){
+      if(c.ahead_intersect===1) continue;            // 交点を過ぎた直進車は対象外
+      const V   = sub(sp, {x:c.x, y:c.y});           // 自分 → 右折車(ego)
+      const d   = len(V);                            // 右折車までの距離
+      const fwd = dot({x:0,y:1}, norm(V));           // 右折車が自分の前方にいるか
+      if(fwd >= P.strFwdMin && egoComing){
+        if(d <= P.strStop){ c.slow=Math.max(0, c.slow-dt*4.5); c.halt=true; }             // 停止
+        else if(d <= P.strDecel){ c.slow=Math.max(0.35, c.slow-dt*2.2); c.decel=true; }   // 減速
+      }
+    }
+  }
+
+  // stash for render/telemetry
+  render._self=sp; render._dir=sdir; render._dCp=dCp; render._blocked=blocked;
+  render._critical=critical; render._tSelf=t_self; render._afterCp=afterCp; render._turning=turning;
+}
+
+// ---------- rendering ----------
+const cv=document.getElementById('cv');
+const ctx=cv.getContext('2d');
+let W=0,H=0,SCALE=1,OX=0,OY=0,DPR=1;
+function resize(){
+  const r=cv.parentElement.getBoundingClientRect();
+  DPR=Math.min(window.devicePixelRatio||1,2);
+  W=r.width; H=r.height;
+  cv.width=Math.round(W*DPR); cv.height=Math.round(H*DPR);
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  SCALE=Math.min(W,H)/(WORLD*2);
+  OX=W/2; OY=H/2;
+}
+window.addEventListener('resize',resize);
+const sx=x=>OX + x*SCALE;
+const sy=y=>OY + y*SCALE;
+
+function roadStrip(){
+  // asphalt cross
+  ctx.fillStyle=getCss('--asphalt');
+  const rh=ROAD_HALF*SCALE;
+  ctx.fillRect(sx(-ROAD_HALF),0,rh*2,H);      // vertical road
+  ctx.fillRect(0,sy(-ROAD_HALF),W,rh*2);      // horizontal road
+  // center dashed lines
+  ctx.strokeStyle='rgba(210,180,80,.45)';
+  ctx.lineWidth=1.5; ctx.setLineDash([10,10]);
+  ctx.beginPath(); ctx.moveTo(sx(0),0); ctx.lineTo(sx(0),H); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0,sy(0)); ctx.lineTo(W,sy(0)); ctx.stroke();
+  ctx.setLineDash([]);
+  // road edges
+  ctx.strokeStyle=getCss('--line'); ctx.lineWidth=1;
+  for(const e of [-ROAD_HALF,ROAD_HALF]){
+    ctx.beginPath(); ctx.moveTo(sx(e),0); ctx.lineTo(sx(e),H); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,sy(e)); ctx.lineTo(W,sy(e)); ctx.stroke();
+  }
+}
+function getCss(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim();}
+
+function drawArrow(p,dir,size,color){
+  const a=Math.atan2(dir.y,dir.x);
+  ctx.save(); ctx.translate(sx(p.x),sy(p.y)); ctx.rotate(a);
+  ctx.strokeStyle=color; ctx.lineWidth=2; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(size,0);
+  ctx.moveTo(size,0); ctx.lineTo(size-6,-4); ctx.moveTo(size,0); ctx.lineTo(size-6,4);
+  ctx.stroke(); ctx.restore();
+}
+function drawCar(p,dir,color,ring){
+  const a=Math.atan2(dir.y,dir.x);
+  ctx.save(); ctx.translate(sx(p.x),sy(p.y)); ctx.rotate(a);
+  const L=4.3*SCALE, Wd=2.1*SCALE;
+  if(ring){ ctx.shadowColor=ring; ctx.shadowBlur=16; }
+  ctx.fillStyle=color;
+  roundRect(-L/2,-Wd/2,L,Wd,3); ctx.fill();
+  ctx.shadowBlur=0;
+  if(ring){ ctx.strokeStyle=ring; ctx.lineWidth=2.5; roundRect(-L/2,-Wd/2,L,Wd,3); ctx.stroke(); }
+  // windshield hint (front)
+  ctx.fillStyle='rgba(0,0,0,.28)';
+  roundRect(L/2-L*0.34,-Wd/2+2,L*0.24,Wd-4,2); ctx.fill();
+  ctx.restore();
+}
+function roundRect(x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
+
+const STATE_COLOR={approach:'--watch',turn:'--clear',stop:'--stop',decel:'--decel',watch:'--watch',hurry:'--clear',cruise:'--clear',clear:'--clear'};
+const STATE_TEXT={approach:'直進進入中（検知前）',turn:'右折中（徐速）',stop:'停止',decel:'減速',watch:'監視中',hurry:'急ぎ目で通過',cruise:'走行中',clear:'通過中'};
+
+function render(){
+  ctx.clearRect(0,0,W,H);
+  roadStrip();
+
+  const sp=render._self, sdir=render._dir, dCp=render._dCp;
+  if(!sp) return;
+
+  // ego path (faint)
+  ctx.strokeStyle='rgba(255,176,46,.16)'; ctx.lineWidth=Math.max(2,2.1*SCALE*1.1);
+  ctx.beginPath();
+  for(let i=0;i<PATH.length;i+=2){ const q=PATH[i]; i===0?ctx.moveTo(sx(q.x),sy(q.y)):ctx.lineTo(sx(q.x),sy(q.y)); }
+  ctx.stroke();
+
+  // rings around cp (decel then stop) — 手動距離パラメータ
+  ctx.setLineDash([6,7]);
+  ctx.strokeStyle='rgba(255,154,61,.55)'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.arc(sx(CP.x),sy(CP.y),P.decel_dist*SCALE,0,Math.PI*2); ctx.stroke();
+  ctx.strokeStyle='rgba(255,91,91,.65)';
+  ctx.beginPath(); ctx.arc(sx(CP.x),sy(CP.y),P.stop_dist*SCALE,0,Math.PI*2); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // cp marker (diamond)
+  ctx.save(); ctx.translate(sx(CP.x),sy(CP.y)); ctx.rotate(Math.PI/4);
+  ctx.fillStyle=getCss('--cp'); ctx.shadowColor=getCss('--cp'); ctx.shadowBlur=14;
+  const d=5.5; ctx.fillRect(-d,-d,d*2,d*2); ctx.shadowBlur=0; ctx.restore();
+
+  // stop line (cp 手前・右折車が譲るとき絶対に越えない線)
+  {
+    const sl=posAt(CP_S-P.stopMargin);
+    const perp={x:-sl.dir.y, y:sl.dir.x};   // 進行方向に垂直
+    const half=1.7;                          // 横幅(片側, m)
+    ctx.strokeStyle='rgba(255,91,91,.9)'; ctx.lineWidth=2.5;
+    ctx.beginPath();
+    ctx.moveTo(sx(sl.P.x - perp.x*half), sy(sl.P.y - perp.y*half));
+    ctx.lineTo(sx(sl.P.x + perp.x*half), sy(sl.P.y + perp.y*half));
+    ctx.stroke();
+  }
+
+  // search radius around ego (近傍検索範囲) — 右折開始後のみ表示
+  if(render._turning){
+    ctx.setLineDash([2,6]);
+    ctx.strokeStyle='rgba(63,198,242,.35)'; ctx.lineWidth=1.2;
+    ctx.beginPath(); ctx.arc(sx(sp.x),sy(sp.y),P.searchRadius*SCALE,0,Math.PI*2); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // detection lines to straight cars
+  if(P.showLines && render._turning){
+    for(const c of cars){
+      const info=detected.find(d=>d.id===c.id);
+      if(!info) continue;
+      ctx.beginPath(); ctx.moveTo(sx(sp.x),sy(sp.y)); ctx.lineTo(sx(c.x),sy(c.y));
+      if(info.blk){ ctx.strokeStyle='rgba(255,91,91,.85)'; ctx.lineWidth=2; ctx.setLineDash([]); }
+      else if(info.inCone){ ctx.strokeStyle='rgba(63,198,242,.7)'; ctx.lineWidth=1.5; ctx.setLineDash([]); }
+      else { ctx.strokeStyle='rgba(120,140,165,.22)'; ctx.lineWidth=1; ctx.setLineDash([3,4]); }
+      ctx.stroke(); ctx.setLineDash([]);
+      // dot value label near midpoint
+      if(info.inCone||info.blk){
+        const mx=(sx(sp.x)+sx(c.x))/2, my=(sy(sp.y)+sy(c.y))/2;
+        ctx.font='11px ui-monospace,monospace'; ctx.fillStyle=info.blk?getCss('--stop'):getCss('--straight');
+        ctx.textAlign='center'; ctx.fillText('dot '+info.cone.toFixed(2),mx,my-4);
+      }
+    }
+  }
+
+  // straight cars
+  for(const c of cars){
+    const info=detected.find(d=>d.id===c.id);
+    const passed = c.ahead_intersect===1;
+    const col = passed ? 'rgba(63,198,242,.30)' : getCss('--straight');
+    const ring = c.halt ? getCss('--stop') : (c.decel ? getCss('--decel') : null);
+    drawCar({x:c.x,y:c.y},{x:0,y:1}, col, ring);
+    drawArrow({x:c.x,y:c.y+2.6},{x:0,y:1},Math.max(8,c.vel*1.4), passed?'rgba(63,198,242,.2)':'rgba(63,198,242,.55)');
+  }
+
+  // ego
+  const scol=getCss(STATE_COLOR[ego.state]||'--clear');
+  drawCar(sp,sdir,getCss('--ego'),scol);
+
+  // ego velocity arrow
+  drawArrow(add(sp,mul(sdir,3)),sdir,Math.max(8,ego.vel*1.4),'rgba(255,176,46,.6)');
+}
+
+// ---------- telemetry DOM ----------
+const $=id=>document.getElementById(id);
+function updateTelemetry(){
+  const scol=getCss(STATE_COLOR[ego.state]||'--clear');
+  $('mVel').textContent=ego.vel.toFixed(1);
+  $('mDist').textContent=render._afterCp?'—':render._dCp.toFixed(1);
+  $('clk').textContent='t+'+simTime.toFixed(1)+'s';
+  const dotEl=$('stDot'); dotEl.style.background=scol; dotEl.style.color=scol;
+  $('stText').textContent=STATE_TEXT[ego.state]||'走行中';
+
+  // arrival bars
+  const crit=render._critical, tSelf=render._tSelf;
+  const bSelf=$('bSelf'), bOther=$('bOther'), gap=$('gap');
+  if(render._turning===false){
+    bSelf.style.width='0%'; bOther.style.width='0%';
+    $('nSelf').textContent='–'; $('nOther').textContent='–';
+    gap.style.left='-99px';
+    $('verdict').innerHTML='右折開始前 — 検知OFF（直進進入中）';
+  } else if(render._afterCp || tSelf==null){
+    bSelf.style.width='0%'; bOther.style.width='0%';
+    $('nSelf').textContent='–'; $('nOther').textContent='–';
+    gap.style.left='-99px';
+    $('verdict').innerHTML= render._afterCp? '交点を通過。監視終了。' : '対象の直進車なし。そのまま進行できる。';
+  } else {
+    const tOther=crit?crit.t_other:null;
+    const scaleMax=Math.max(tSelf, tOther||0, P.decideTTC)*1.25 || 1;
+    bSelf.style.width=(clamp(tSelf/scaleMax,0,1)*100)+'%';
+    bOther.style.width=(tOther!=null?clamp(tOther/scaleMax,0,1)*100:0)+'%';
+    $('nSelf').textContent=tSelf.toFixed(2)+'s';
+    $('nOther').textContent=tOther!=null?tOther.toFixed(2)+'s':'–';
+    // threshold marker on the t_other track: t_other below it => stop
+    const gpos=clamp(P.decideTTC/scaleMax,0,1)*100;
+    gap.style.left='calc('+gpos+'% - 1px)';
+    if(crit&&crit.blk){
+      $('verdict').innerHTML='<b style="color:var(--stop)">停止</b> — t_other &lt; '+P.decideTTC.toFixed(1)+'s';
+    } else if(crit){
+      $('verdict').innerHTML='到達に余裕あり（t_other ≥ '+P.decideTTC.toFixed(1)+'s）→ <b>進行</b>';
+    } else {
+      $('verdict').innerHTML='対象の直進車なし。そのまま進行できる。';
+    }
+  }
+
+  // car table — keyed rows, stable order by id (no full rebuild → no flicker)
+  const rows=detected.slice().sort((a,b)=>a.id-b.id).slice(0,8);
+  updateCarTable(rows);
+}
+
+const rowMap=new Map();
+function pillHTML(r){
+  if(r.blk) return '<span class="pill blk">ブロック</span>';
+  return r.inCone ? '<span class="pill in">コーン内</span>' : '<span class="pill out">除外</span>';
+}
+function updateCarTable(rows){
+  const body=$('carsBody');
+  const seen=new Set();
+  for(const r of rows){
+    seen.add(r.id);
+    let tr=rowMap.get(r.id);
+    if(!tr){
+      tr=document.createElement('tr');
+      tr.innerHTML='<td></td><td class="mono"></td><td class="mono"></td><td></td>';
+      rowMap.set(r.id,tr);
+    }
+    tr.children[0].textContent='#'+r.id;
+    tr.children[1].textContent=r.cone.toFixed(2);
+    tr.children[2].textContent=r.t_other.toFixed(2)+'s';
+    const ph=pillHTML(r);
+    if(tr.children[3].dataset.p!==ph){ tr.children[3].innerHTML=ph; tr.children[3].dataset.p=ph; }
+  }
+  // keep DOM order == id order (appendChild moves existing nodes, no reflow jump for stable order)
+  for(const r of rows) body.appendChild(rowMap.get(r.id));
+  // drop rows for cars no longer detected
+  for(const [id,tr] of rowMap){ if(!seen.has(id)){ tr.remove(); rowMap.delete(id); } }
+  $('carsEmpty').style.display=rows.length?'none':'block';
+}
+
+// ---------- loop ----------
+let last=performance.now();
+let teleTimer=0;
+function frame(now){
+  let real=(now-last)/1000; last=now;
+  const dt=Math.min(real,0.05)*P.simSpeed;
+  if(!paused) step(dt);
+  render();                       // canvas: every frame (smooth)
+  teleTimer+=real;
+  if(teleTimer>=0.08){ teleTimer=0; updateTelemetry(); }  // DOM: ~12Hz (no jank)
+  requestAnimationFrame(frame);
+}
+
+// ---------- controls ----------
+function bind(id,key,fmt,post){
+  const el=$(id), lab=$('l'+id.slice(1));
+  const upd=()=>{ P[key]=parseFloat(el.value); if(lab) lab.textContent=fmt?fmt(P[key]):P[key]; if(post)post(); };
+  el.addEventListener('input',upd); upd();
+}
+bind('pTtc','decideTTC',v=>v.toFixed(1));
+bind('pLo','coneLo',v=>v.toFixed(2));
+bind('pHi','coneHi',v=>v.toFixed(2));
+bind('pFwd','fwdMin',v=>v.toFixed(2));
+bind('pStop','stop_dist',v=>v.toFixed(1));
+bind('pDec','decel_dist',v=>v.toFixed(1));
+bind('pSm','stopMargin',v=>v.toFixed(1));
+bind('pVf','v_floor',v=>v.toFixed(1));
+bind('pAc','a_comfort',v=>v.toFixed(1));
+bind('pAe','a_emergency',v=>v.toFixed(1));
+bind('pAa','a_accel',v=>v.toFixed(1));
+bind('pSr','searchRadius',v=>v.toFixed(0)+' m');
+bind('pSfwd','strFwdMin',v=>v.toFixed(2));
+bind('pSdec','strDecel',v=>v.toFixed(1));
+bind('pSstp','strStop',v=>v.toFixed(1));
+bind('pSs','straightSpeed',v=>v.toFixed(1));
+bind('pInt','spawnInt',v=>v.toFixed(1));
+bind('pCr','cruise',v=>v.toFixed(1));
+bind('pTc','turnCreep',v=>v.toFixed(2));
+bind('pSp','simSpeed',v=>v.toFixed(1)+'×');
+
+$('tSafe').addEventListener('change',e=>{ P.safeOn=e.target.checked; $('smWrap').style.display=P.safeOn?'block':'none'; });
+$('tLines').addEventListener('change',e=>{ P.showLines=e.target.checked; });
+
+$('bPause').addEventListener('click',()=>{ paused=!paused; $('bPause').textContent=paused?'再生':'一時停止'; $('bPause').classList.toggle('primary',!paused); });
+$('bSpawn').addEventListener('click',()=>spawnCar());
+$('bReset').addEventListener('click',()=>fullReset());
+
+$('carsHead').addEventListener('click',()=>{ $('carsCard').classList.toggle('collapsed'); });
+
+// ---------- boot ----------
+resize();
+fullReset();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

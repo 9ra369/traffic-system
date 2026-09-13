@@ -1,0 +1,79 @@
+// ════════════════════════════════════════════════════
+// CONFLICT DETECT: 交差点での優先権判定
+// Input 0: 車両 / Input 3: conflict points
+//   (road_a, road_b, from_a, from_b)
+// 書く: f@dist_to_conflict, i@yield_conflict, i@cross_committed
+// ════════════════════════════════════════════════════
+f@dist_to_conflict = 9999.0;
+i@yield_conflict   = 0;
+
+float headway     = chf("conflict_headway");   // 2.0 秒くらい
+float commit_dist = chf("commit_dist");        // 4.0m
+float v_floor     = 0.5;                       // 停止車のtが∞になるのを防ぐ
+
+int cps[] = nearpoints(3, @P, @search_radius);
+
+foreach (int cp; cps) {
+	 // 
+    string ra = point(3, "road_a", cp);
+    string rb = point(3, "road_b", cp);
+    string fa = point(3, "from_a", cp);
+    string fb = point(3, "from_b", cp);
+
+    //現在レーン or 次レーンのどちらかで一致すれば対象
+    int self_is_a = (ra == s@road_name || ra == s@next_road || fa == s@road_name);
+    int self_is_b = (rb == s@road_name || rb == s@next_road || fb == s@road_name);
+    if (!self_is_a && !self_is_b) continue;
+    if (self_is_a && self_is_b) continue;       // 自分同士。ありえないが保険
+
+    // 相手側は「コネクタ名」と「手前レーン名」の両方で照合する
+    string other_road = self_is_a ? rb : ra;
+    string other_from = self_is_a ? fb : fa;
+
+    vector cp_pos = point(3, "P", cp);
+    vector to_cp  = cp_pos - @P;
+    float  d_self = length(to_cp);
+    if (dot(to_cp, v@dir) <= 0) continue;      // 通過済み
+
+    // ★ コミット済みなら絶対に譲らない（交差点内で止まるのが最悪）
+    if (d_self < commit_dist) { i@cross_committed = 1; continue; }
+
+    float t_self = d_self / max(f@vel, v_floor);
+
+    // 相手側レーンの車を見る
+    int others[] = nearpoints(0, cp_pos, @search_radius);
+    foreach (int pt; others) {
+        if (pt == @ptnum) continue;
+        if (point(0, "car", pt) != 1) continue;
+
+        string o_road = point(0, "road_name", pt);
+        string o_next = point(0, "next_road", pt);
+        if (o_road != other_road && o_road != other_from && o_next != other_road)
+            continue;
+
+        vector o_to_cp = cp_pos - point(0, "P", pt);
+        vector o_dir   = point(0, "dir", pt);
+        if (dot(o_to_cp, o_dir) <= 0) continue;                 // 相手も通過済み
+
+        float o_vel   = point(0, "vel", pt);
+        float t_other = length(o_to_cp) / max(o_vel, v_floor);
+        if (abs(t_self - t_other) > headway) continue;          // 時間窓が重ならない
+
+        // ── 非対称な優先ルール ──
+        string o_turn = point(0, "turn", pt);
+        int    o_id   = point(0, "id", pt);
+        int lose;
+        if (s@turn == o_turn) {
+            lose = (int(@id) > o_id);                // 同格 → id順
+        } else {
+            lose = (s@turn == "right");              // 直進優先（左側通行）
+        }
+        // 相手が既にコミット済みなら無条件で譲る
+        if (point(0, "cross_committed", pt) == 1) lose = 1;
+
+        if (lose && d_self < f@dist_to_conflict) {
+            f@dist_to_conflict = d_self;
+            i@yield_conflict   = 1;
+        }
+    }
+}

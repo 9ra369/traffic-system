@@ -1,0 +1,75 @@
+// ════════════════════════════════════════════════════
+// CONFLICT DETECT (DOP, 毎フレーム)
+// 読む: i[]@my_conflicts, v[]@my_conf_pos, s@turn
+// 書く: f@dist_to_conflict, i@yield_conflict,
+//       i@cross_committed, f@wait_time
+// ════════════════════════════════════════════════════
+f@dist_to_conflict = 9999.0;
+i@yield_conflict   = 0;
+
+int nc = len(v[]@my_conf_pos);
+if (nc == 0) { i@cross_committed = 0; f@wait_time = 0.0; return; }
+
+// ── 前方に残っている交錯点のうち最寄りを探す ──────────
+int   near_i = -1;
+float near_d = 9999.0;
+for (int i = 0; i < nc; i++) {
+    vector to_cp = v[]@my_conf_pos[i] - @P;
+    if (dot(to_cp, v@dir) <= 0) continue;      // 通過済み
+    float d = length(to_cp);
+    if (d < near_d) { near_d = d; near_i = i; }
+}
+// 全部通過した → ここがコミット解除の唯一の場所
+if (near_i < 0) { i@cross_committed = 0; f@wait_time = 0.0; return; }
+
+if (s@turn != "right")      return;   // 直進は譲らない（左側通行）
+if (i@cross_committed == 1) return;   // 判定済み、渡り切るまで再評価しない
+
+float scan_dist = chf("conflict_scan");   // 80.0
+float base_gap  = chf("base_gap");        // 3.5 秒
+float min_gap   = chf("min_gap");         // 1.2 秒
+float patience  = chf("patience");        // 12.0 秒
+float cross_spd = chf("cross_speed");     // 5.0 m/s
+float v_floor   = 0.5;
+
+// 待つほど許容ギャップが縮む（gap acceptance）
+float need_gap = fit(f@wait_time, 0.0, patience, base_gap, min_gap);
+
+// ★ 停止中でも「今出たら何秒で着くか」で評価する。
+//    f@vel をそのまま使うと t_self が発散して永久に出られない
+float v_self = max(f@vel, cross_spd);
+
+int blocked = 0;
+int cars[] = nearpoints(0, "@car=1", @P, scan_dist);
+
+for (int i = 0; i < nc && !blocked; i++) {
+    vector cp    = v[]@my_conf_pos[i];
+    vector to_cp = cp - @P;
+    if (dot(to_cp, v@dir) <= 0) continue;
+
+    int   o_lane = i[]@my_conflicts[i];
+    float t_self = length(to_cp) / v_self;
+
+    foreach (int pt; cars) {
+        if (pt == @ptnum) continue;
+        if (point(0, "lane_id",   pt) != o_lane) continue;
+        if (point(0, "car_state", pt) == 2) continue;   // 停止中は来ない
+
+        vector o_to = cp - point(0, "P", pt);
+        if (dot(o_to, point(0, "dir", pt)) <= 0) continue; // 相手も通過済み
+
+        float t_other = length(o_to) / max(point(0, "vel", pt), v_floor);
+
+        // 自分が渡り切る + マージン より前に相手が来るなら塞がれている
+        if (t_other < t_self + need_gap) { blocked = 1; break; }
+    }
+}
+
+if (blocked) {
+    f@dist_to_conflict = near_d;
+    i@yield_conflict   = 1;
+    f@wait_time       += @TimeInc;
+} else {
+    f@wait_time = max(f@wait_time - @TimeInc * 2.0, 0.0);
+    if (near_d < chf("commit_dist")) i@cross_committed = 1;
+}

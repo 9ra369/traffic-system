@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>交通システム Web版 — Phase 6: 道路網グラフ + ルーティング</title>
+<style>
+  :root {
+    --bg:#0e1218; --panel:rgba(20,26,34,0.86); --border:rgba(120,140,165,0.18);
+    --text:#c9d4e0; --text-dim:#74808f; --accent:#5ad1c8;
+    --mono: ui-monospace,"SF Mono","Cascadia Code",Consolas,monospace;
+    --sans: system-ui,"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; overflow:hidden; background:var(--bg); }
+  canvas { display:block; touch-action:none; cursor:grab; }
+  #panel {
+    position:fixed; top:16px; left:16px; width:250px; padding:14px 16px;
+    background:var(--panel); border:1px solid var(--border); border-radius:10px;
+    backdrop-filter:blur(8px); color:var(--text); font-family:var(--sans); user-select:none;
+  }
+  #panel h1 { margin:0 0 2px; font-size:13px; font-weight:650; letter-spacing:.02em; }
+  #panel .sub { margin:0 0 12px; font-size:11px; color:var(--text-dim); }
+  #panel .group { display:flex; flex-direction:column; gap:8px; margin-bottom:12px; }
+  #panel label { display:flex; align-items:center; gap:9px; font-size:12px; cursor:pointer; }
+  #panel input[type=checkbox] {
+    appearance:none; width:15px; height:15px; margin:0; border:1.5px solid var(--text-dim);
+    border-radius:4px; position:relative; cursor:pointer; flex:none;
+  }
+  #panel input[type=checkbox]:checked { background:var(--accent); border-color:var(--accent); }
+  #panel input[type=checkbox]:checked::after {
+    content:""; position:absolute; left:4px; top:1px; width:4px; height:8px;
+    border:solid #0e1218; border-width:0 2px 2px 0; transform:rotate(42deg);
+  }
+  #stats { border-top:1px solid var(--border); padding-top:10px;
+    font-family:var(--mono); font-size:11px; color:var(--text-dim); line-height:1.7; }
+  #stats b { color:var(--text); font-weight:600; }
+  #live { margin-top:8px; font-family:var(--mono); font-size:11px; color:var(--accent); line-height:1.6; }
+  #live b { color:var(--text); font-weight:600; }
+  #legend { display:flex; align-items:center; gap:6px; margin-top:8px;
+    font-family:var(--mono); font-size:10px; color:var(--text-dim); }
+  #legend i { flex:1; height:6px; border-radius:3px;
+    background:linear-gradient(90deg,#ff5a4d,#e7b948,#5ad1c8); }
+  #panel .btnrow { display:flex; gap:8px; margin-bottom:12px; }
+  #panel button {
+    flex:1; padding:6px 8px; font-size:11px; font-family:var(--sans);
+    color:var(--text); background:rgba(120,140,165,0.12);
+    border:1px solid var(--border); border-radius:7px; cursor:pointer;
+  }
+  #panel button:hover { background:rgba(120,140,165,0.22); }
+  #panel button.on { background:var(--accent); color:#0e1218; border-color:var(--accent); font-weight:650; }
+  #edit-help { display:none; margin:0 0 12px; padding:8px 10px; font-size:11px; line-height:1.75;
+    color:var(--text-dim); background:rgba(90,209,200,0.08);
+    border:1px solid rgba(90,209,200,0.25); border-radius:8px; }
+  #edit-help b { color:var(--accent); }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div id="panel">
+  <h1>交通システム — Phase 6</h1>
+  <p class="sub">道路網グラフ + ルーティング</p>
+  <div class="group">
+    <label><input type="checkbox" id="chk-pause"> 一時停止</label>
+    <label><input type="checkbox" id="chk-color" checked> 速度で色分け</label>
+    <label><input type="checkbox" id="chk-graph"> グラフ(ノード/向き)を表示</label>
+    <label><input type="checkbox" id="chk-gap"> 車間ラインを表示</label>
+  </div>
+  <div class="btnrow">
+    <button id="btn-edit">道路を編集</button>
+    <button id="btn-reset">リセット</button>
+  </div>
+  <div class="btnrow">
+    <button id="btn-zoomout" title="縮小">−</button>
+    <button id="btn-zoomin" title="拡大">＋</button>
+    <button id="btn-fit">全体表示</button>
+  </div>
+  <div id="edit-help">
+    <b>編集モード</b><br>
+    ・空白をクリック＝ノード追加<br>
+    ・ノード→別ノードをクリック＝道路を接続<br>
+    ・連続クリックで道を伸ばす<br>
+    ・右クリック＝ノード/道路を削除<br>
+    ・Escで選択解除／<b>Enterで完了</b>
+  </div>
+  <div id="stats"></div>
+  <div id="live"></div>
+  <div id="legend"><span>遅</span><i></i><span>速</span></div>
+</div>
+
+<script>
+/* =========================================================================
+ *  CONFIG
+ * ========================================================================= */
+const CONFIG = {
+  LANE_WIDTH: 12, LANE_COUNT: 2,
+  SAMPLE_SPACING: 2, SPLINE_SUBDIVISIONS: 24,
+  CAMERA_PADDING: 70, CAMERA_MAX_SCALE: 1.4,
+  // 車両
+  CAR_LENGTH: 16, CAR_WIDTH: 8, DEFAULT_MAX_SPEED: 70,
+  NUM_CARS: 20,
+  NODE_LOOKAHEAD: 55,    // ノード手前でこの距離になったら次エッジを確定し前方先読み
+  // IDM
+  IDM: { T: 1.4, s0: 10, aMax: 38, b: 40, bMax: 60 },  // bMax=急ブレーキ上限
+  // 信号・交差点
+  STOP_LINE_OFFSET: 8,   // (トリム後の)エッジ終端から停止線までの距離 (px)
+  NODE_RADIUS: 16,       // 交差点半径：各エッジをノード手前でこの距離トリムし接続カーブで繋ぐ
+  LIGHT: { green: 7, yellow: 2, allRed: 1.5 },
+  SIGNALIZE_MIN_DEGREE: 3, // この次数以上のノードを信号化（それ未満は単なる曲がり角）
+  // 横断歩道・歩行者
+  CROSSWALK_BAND: 14, PED_SPEED: 20,
+  PED_SPAWN_MIN: 2.5, PED_SPAWN_MAX: 7.0, PED_MAX_PER_CW: 3, PED_WAIT_SPAWN_CHANCE: 0.25,
+};
+
+const COLORS = {
+  bg:"#0e1218", asphalt:"#3c424c",
+  edge:"rgba(225,230,238,0.45)", center:"#e7b948",
+  carBody:"#dbe2ec", carFront:"rgba(18,23,31,0.75)",
+  carSlow:[255,90,77], carMid:[231,185,72], carFast:[90,209,200],
+  gapLine:"rgba(255,122,107,0.45)",
+  lightGreen:"#4ade80", lightYellow:"#f5c542", lightRed:"#f0584a",
+  node:"#3c424c", nodeRing:"rgba(90,209,200,0.5)", nodeLabel:"#5ad1c8",
+  edgeDir:"rgba(90,209,200,0.5)",
+  crosswalk:"rgba(228,234,242,0.5)", pedWalk:"#a78bfa", pedWait:"rgba(167,139,250,0.4)",
+};
+const LIGHT_COLOR = { green:COLORS.lightGreen, yellow:COLORS.lightYellow, red:COLORS.lightRed };
+
+/* =========================================================================
+ *  ネットワーク定義 — ノード(交差点/角) と 街路(無向)。
+ *  各街路から「左側通行の有向エッジ」を2本生成する。
+ * ========================================================================= */
+const NETWORK = {
+  nodes: {
+    N1:{x:200,y:140}, N2:{x:520,y:140}, N3:{x:840,y:140},
+    N4:{x:200,y:460}, N5:{x:520,y:460}, N6:{x:840,y:460},
+    N7:{x:200,y:780}, N8:{x:520,y:780}, N9:{x:840,y:780},
+  },
+  streets: [
+    {a:"N1",b:"N2"}, {a:"N2",b:"N3"},   // 上段(横)
+    {a:"N4",b:"N5"}, {a:"N5",b:"N6"},   // 中段(横)
+    {a:"N7",b:"N8"}, {a:"N8",b:"N9"},   // 下段(横)
+    {a:"N1",b:"N4"}, {a:"N4",b:"N7"},   // 左列(縦)
+    {a:"N2",b:"N5"}, {a:"N5",b:"N8"},   // 中列(縦)
+    {a:"N3",b:"N6"}, {a:"N6",b:"N9"},   // 右列(縦)
+  ],
+};
+const DEFAULT_NETWORK=JSON.parse(JSON.stringify(NETWORK)); // リセット用スナップショット
+
+/* =========================================================================
+ *  Catmull-Rom & サンプリング（Phase 1 から流用）
+ * ========================================================================= */
+function catmullRom(p0,p1,p2,p3,u){
+  const u2=u*u,u3=u2*u;
+  return {
+    x:0.5*(2*p1.x+(-p0.x+p2.x)*u+(2*p0.x-5*p1.x+4*p2.x-p3.x)*u2+(-p0.x+3*p1.x-3*p2.x+p3.x)*u3),
+    y:0.5*(2*p1.y+(-p0.y+p2.y)*u+(2*p0.y-5*p1.y+4*p2.y-p3.y)*u2+(-p0.y+3*p1.y-3*p2.y+p3.y)*u3),
+  };
+}
+function buildDensePolyline(C,sub){
+  const get=k=>C[Math.max(0,Math.min(C.length-1,k))]; const d=[];
+  for(let i=0;i<C.length-1;i++){
+    const p0=get(i-1),p1=get(i),p2=get(i+1),p3=get(i+2);
+    for(let s=0;s<sub;s++) d.push(catmullRom(p0,p1,p2,p3,s/sub));
+  }
+  d.push(C[C.length-1]); return d;
+}
+function resampleByArcLength(dense,spacing){
+  const out=[{x:dense[0].x,y:dense[0].y,t:0,heading:0}]; let cum=0,next=spacing;
+  for(let i=1;i<dense.length;i++){
+    const a=dense[i-1],b=dense[i],dx=b.x-a.x,dy=b.y-a.y,len=Math.hypot(dx,dy);
+    if(len<1e-9) continue; const h=Math.atan2(dy,dx);
+    while(cum+len>=next){ const r=(next-cum)/len; out.push({x:a.x+dx*r,y:a.y+dy*r,t:next,heading:h}); next+=spacing; }
+    cum+=len;
+  }
+  const last=dense[dense.length-1],prev=out[out.length-1];
+  out.push({x:last.x,y:last.y,t:cum,heading:Math.atan2(last.y-prev.y,last.x-prev.x)});
+  if(out.length>1) out[0].heading=out[1].heading;
+  return {samples:out,length:cum};
+}
+// 既存の点列から t(累積弧長) と heading を再計算（レーンオフセット後の確定用）
+function finalizeSamples(pts){
+  const out=[{x:pts[0].x,y:pts[0].y,t:0,heading:0}]; let t=0;
+  for(let i=1;i<pts.length;i++){
+    const a=pts[i-1],b=pts[i],dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy);
+    if(d<1e-9) continue; t+=d; out.push({x:b.x,y:b.y,t,heading:Math.atan2(dy,dx)});
+  }
+  if(out.length>1) out[0].heading=out[1].heading;
+  return {samples:out,length:t};
+}
+// centerSamples を t で参照（二分探索 + 補間）。road/edge どちらにも使える。
+function sampleByT(obj,t){
+  const s=obj.centerSamples; t=Math.max(0,Math.min(obj.length,t));
+  let lo=0,hi=s.length-1;
+  while(lo<hi){ const m=(lo+hi+1)>>1; if(s[m].t<=t) lo=m; else hi=m-1; }
+  const a=s[lo],b=s[Math.min(lo+1,s.length-1)],span=b.t-a.t,r=span>1e-9?(t-a.t)/span:0;
+  return {x:a.x+(b.x-a.x)*r,y:a.y+(b.y-a.y)*r,heading:a.heading};
+}
+
+/* =========================================================================
+ *  ネットワーク構築（街路 → 有向エッジ x2、ノードグラフ）
+ * ========================================================================= */
+const wrapT=(t,L)=>((t%L)+L)%L;
+
+// 線分 pNear(中心から距離<R) → pFar(距離>=R) 上で、中心 C から距離ちょうど R の点
+function circleCross(pFar,pNear,C,R){
+  const dFar=Math.hypot(pFar.x-C.x,pFar.y-C.y), dNear=Math.hypot(pNear.x-C.x,pNear.y-C.y);
+  const r=(R-dNear)/((dFar-dNear)||1);
+  return {x:pNear.x+(pFar.x-pNear.x)*r, y:pNear.y+(pFar.y-pNear.y)*r};
+}
+// ノード中心 A / B から半径 R 以内を切り落とす（交差点円周ちょうどで終端）
+function trimByNodeDistance(samples,A,B,R){
+  const R2=R*R, d2=(p,c)=>{const dx=p.x-c.x,dy=p.y-c.y;return dx*dx+dy*dy;};
+  let i0=0; while(i0<samples.length && d2(samples[i0],A)<R2) i0++;
+  let i1=samples.length-1; while(i1>=0 && d2(samples[i1],B)<R2) i1--;
+  if(i0>i1){ const m=samples[samples.length>>1]; return [{x:m.x,y:m.y},{x:m.x+0.01,y:m.y}]; }
+  const out=[];
+  if(i0>0) out.push(circleCross(samples[i0],samples[i0-1],A,R));   // 始端の円周点
+  for(let i=i0;i<=i1;i++) out.push({x:samples[i].x,y:samples[i].y});
+  if(i1<samples.length-1) out.push(circleCross(samples[i1],samples[i1+1],B,R)); // 終端の円周点
+  return out;
+}
+
+// 中心線(controlPoints, 進行順)とレーンオフセットから有向エッジを生成。
+// trimR: 各ノード中心からこの半径ぶん交差点側を削る（接続カーブが繋ぐ）。
+function buildEdge(id,fromNode,toNode,controlPoints,offset,trimR){
+  const base=resampleByArcLength(buildDensePolyline(controlPoints,CONFIG.SPLINE_SUBDIVISIONS),CONFIG.SAMPLE_SPACING);
+  const off=base.samples.map(s=>({
+    x:s.x+Math.cos(s.heading+Math.PI/2)*offset,
+    y:s.y+Math.sin(s.heading+Math.PI/2)*offset,
+  }));
+  const fin=finalizeSamples(off);
+  const A=controlPoints[0], B=controlPoints[controlPoints.length-1];       // ノード中心
+  const R=Math.min(trimR||0, Math.max(2,(fin.length-8)/2));                // 短い道では縮める
+  const pts=trimByNodeDistance(fin.samples, A, B, R);
+  const fin2=finalizeSamples(pts);
+  return {id,fromNode,toNode,centerSamples:fin2.samples,length:fin2.length};
+}
+
+function buildNetwork(net){
+  const nodes={};
+  for(const [id,p] of Object.entries(net.nodes))
+    nodes[id]={id,position:{x:p.x,y:p.y},outgoing:[],incoming:[]};
+  const edges=[]; const streets=[];
+  const off=CONFIG.LANE_WIDTH/2;          // レーン中心は道路中心から半レーン
+  net.streets.forEach((st,si)=>{
+    const a=net.nodes[st.a],b=net.nodes[st.b],via=st.via||[];
+    const cpF=[a,...via,b].map(p=>({x:p.x,y:p.y}));
+    const cpR=[b,...[...via].reverse(),a].map(p=>({x:p.x,y:p.y}));
+    const eF=buildEdge(`s${si}_${st.a}_${st.b}`,st.a,st.b,cpF,-off,CONFIG.NODE_RADIUS);
+    const eR=buildEdge(`s${si}_${st.b}_${st.a}`,st.b,st.a,cpR,-off,CONFIG.NODE_RADIUS);
+    eF.streetId=si; eR.streetId=si; eF.sibling=eR.id; eR.sibling=eF.id;
+    edges.push(eF,eR);
+    // 描画用の街路中心線
+    const cl=resampleByArcLength(buildDensePolyline(cpF,CONFIG.SPLINE_SUBDIVISIONS),CONFIG.SAMPLE_SPACING);
+    streets.push({id:si,centerSamples:cl.samples,length:cl.length,
+      laneWidth:CONFIG.LANE_WIDTH,laneCount:CONFIG.LANE_COUNT});
+  });
+  for(const e of edges){ nodes[e.fromNode].outgoing.push(e.id); nodes[e.toNode].incoming.push(e.id); }
+
+  // --- ノード内の接続曲線(コネクタ)を生成：流入エッジ終端→流出エッジ始点を滑らかに繋ぐ ---
+  const edgeById=Object.fromEntries(edges.map(e=>[e.id,e]));
+  const connectors=[]; let cc=0;
+  for(const node of Object.values(nodes)){
+    for(const inId of node.incoming){
+      const ein=edgeById[inId]; ein.connectors=[];
+      let outs=node.outgoing.filter(oid=>oid!==ein.sibling); // 同一街路へのUターンは除外
+      if(outs.length===0) outs=node.outgoing.slice();         // 行き止まりはUターン許可
+      for(const outId of outs){
+        const conn=buildConnector(`c${cc++}`,node.id,ein,edgeById[outId]);
+        connectors.push(conn); edgeById[conn.id]=conn; ein.connectors.push(conn.id);
+      }
+    }
+  }
+  return {nodes,edges,connectors,streets,edgeById};
+}
+
+// 三次ベジェ
+function cubicBezier(p0,p1,p2,p3,u){
+  const v=1-u,a=v*v*v,b=3*v*v*u,c=3*v*u*u,d=u*u*u;
+  return {x:a*p0.x+b*p1.x+c*p2.x+d*p3.x, y:a*p0.y+b*p1.y+c*p2.y+d*p3.y};
+}
+// 流入終端の接線と流出始点の接線を保った接続曲線（車線中心どうしを繋ぐ）
+function buildConnector(id,nodeId,ein,eout){
+  const p0=ein.centerSamples[ein.centerSamples.length-1];
+  const p3=eout.centerSamples[0];
+  const t0={x:Math.cos(p0.heading),y:Math.sin(p0.heading)};
+  const t3={x:Math.cos(p3.heading),y:Math.sin(p3.heading)};
+  const dist=Math.hypot(p3.x-p0.x,p3.y-p0.y);
+  const d=dist*0.45;                          // ハンドル長 (<dist/2でオーバーシュート防止)
+  const c1={x:p0.x+t0.x*d,y:p0.y+t0.y*d};
+  const c2={x:p3.x-t3.x*d,y:p3.y-t3.y*d};
+  const N=Math.max(2,Math.ceil(dist/CONFIG.SAMPLE_SPACING));
+  const pts=[]; for(let i=0;i<=N;i++) pts.push(cubicBezier(p0,c1,c2,p3,i/N));
+  const fin=finalizeSamples(pts);
+  return {id,fromNode:nodeId,toNode:eout.toNode,isConnector:true,
+          fromEdge:ein.id,toEdge:eout.id,
+          centerSamples:fin.samples,length:fin.length};
+}
+
+// ルーティング：本線エッジ → ノード内コネクタ → 本線エッジ … と辿る
+function chooseNextEdge(curEdgeId){
+  const cur=net.edgeById[curEdgeId];
+  if(cur.isConnector) return cur.toEdge;                    // コネクタは行き先が確定
+  const opts=cur.connectors;
+  if(opts&&opts.length) return opts[(Math.random()*opts.length)|0];
+  // 保険（万一コネクタ未生成）
+  const node=net.nodes[cur.toNode];
+  let outs=node.outgoing.filter(eid=>eid!==cur.sibling);
+  if(!outs.length) outs=node.outgoing;
+  return outs[(Math.random()*outs.length)|0];
+}
+
+/* =========================================================================
+ *  IDM
+ * ========================================================================= */
+function idmAcceleration(car,lead){
+  const p=CONFIG.IDM,v=car.speed,v0=car.maxSpeed;
+  const free=1-Math.pow(v/v0,4);
+  let a;
+  if(!lead) a=p.aMax*free;
+  else{
+    const dv=v-lead.car.speed;
+    const s=Math.max(lead.gap-CONFIG.CAR_LENGTH,0.1);
+    const sStar=p.s0+Math.max(0,v*p.T+(v*dv)/(2*Math.sqrt(p.aMax*p.b)));
+    a=p.aMax*(free-(sStar/s)**2);
+  }
+  return Math.max(a,-p.bMax);          // 急ブレーキを快適上限で頭打ち
+}
+
+// 前車検出：同一エッジの前方 + ノード手前なら確定済み次エッジの先頭も先読み
+function findLeadCar(car){
+  const e=net.edgeById[car.edgeId]; let best=null,bg=Infinity;
+  for(const o of cars){
+    if(o===car||o.edgeId!==car.edgeId) continue;
+    const g=o.t-car.t; if(g>0&&g<bg){bg=g;best=o;}
+  }
+  const remaining=e.length-car.t;
+  if(remaining<CONFIG.NODE_LOOKAHEAD && car.nextEdgeId){
+    for(const o of cars){ if(o.edgeId!==car.nextEdgeId) continue;
+      const g=remaining+o.t; if(g<bg){bg=g;best=o;} }
+  }
+  return best?{car:best,gap:bg}:null;
+}
+
+/* =========================================================================
+ *  信号機（ノード単位・接続軸ごとにフェーズ。対向/同軸は同時に青）
+ * ========================================================================= */
+function axisClose(a,b,tol){ let d=Math.abs(a-b); d=Math.min(d,Math.PI-d); return d<tol; }
+
+function buildSignals(){
+  const lights=[]; const byEdge={};
+  const {green,yellow,allRed}=CONFIG.LIGHT,slot=green+yellow+allRed;
+  for(const node of Object.values(net.nodes)){
+    if(node.incoming.length<CONFIG.SIGNALIZE_MIN_DEGREE) continue;
+    // 各流入エッジのノードでの進入方位を [0,PI) に畳んで軸ごとにグループ化
+    const entries=node.incoming.map(eid=>{
+      const e=net.edgeById[eid],s=e.centerSamples[e.centerSamples.length-1];
+      return {eid,axis:((s.heading%Math.PI)+Math.PI)%Math.PI};
+    });
+    const groups=[];
+    for(const en of entries){
+      let g=groups.find(gr=>axisClose(gr.axis,en.axis,Math.PI/5));
+      if(!g){g={axis:en.axis,members:[]};groups.push(g);}
+      g.members.push(en.eid);
+    }
+    const cycleTotal=slot*groups.length;
+    groups.forEach((g,gi)=>{
+      for(const eid of g.members){
+        const L={id:`light_${node.id}_${eid}`,nodeId:node.id,edgeId:eid,group:gi,
+          phaseOffset:gi*slot,cycle:{green,yellow},cycleTotal,state:"red"};
+        lights.push(L); byEdge[eid]=L;
+      }
+    });
+  }
+  lightByEdge=byEdge; return lights;
+}
+function trafficLightState(light,time){
+  const C=light.cycleTotal,local=((time-light.phaseOffset)%C+C)%C;
+  if(local<light.cycle.green) return "green";
+  if(local<light.cycle.green+light.cycle.yellow) return "yellow";
+  return "red";
+}
+// 赤/黄の停止線を仮想停止車として返す（エッジ終端=ノード手前の stopT）
+function findStopObstacle(car){
+  const light=lightByEdge[car.edgeId];
+  if(!light||light.state==="green") return null;
+  const e=net.edgeById[car.edgeId],stopT=e.length-CONFIG.STOP_LINE_OFFSET;
+  const gap=stopT-car.t;
+  if(gap<=0) return null;            // 既に停止線通過 → そのまま交差点を抜ける
+  return {car:{speed:0},gap};
+}
+
+/* =========================================================================
+ *  横断歩道 & 歩行者
+ * ========================================================================= */
+const randRange=(a,b)=>a+Math.random()*(b-a);
+
+// 信号化エッジの停止線付近に横断歩道を配置（道路全幅を横断）
+function buildCrosswalks(){
+  const cws=[]; const byEdge={};
+  for(const light of trafficLights){
+    const e=net.edgeById[light.edgeId];
+    const stopT=e.length-CONFIG.STOP_LINE_OFFSET;
+    const t=Math.min(e.length-2,stopT+CONFIG.CROSSWALK_BAND/2+2);
+    const c=sampleByT(e,t);
+    const nx=Math.cos(c.heading+Math.PI/2),ny=Math.sin(c.heading+Math.PI/2);
+    // エッジはレーン中心(道路中心から半レーン)なので、道路中心へ戻して全幅展開
+    const rcx=c.x+nx*(CONFIG.LANE_WIDTH/2), rcy=c.y+ny*(CONFIG.LANE_WIDTH/2);
+    const span=CONFIG.LANE_WIDTH*CONFIG.LANE_COUNT, half=span/2+4;
+    const cw={
+      id:`cw_${light.edgeId}`, edgeId:light.edgeId, t, width:span,
+      center:{x:rcx,y:rcy}, heading:c.heading,
+      endpoints:[{x:rcx-nx*half,y:rcy-ny*half},{x:rcx+nx*half,y:rcy+ny*half}],
+      spawnTimer:randRange(CONFIG.PED_SPAWN_MIN,CONFIG.PED_SPAWN_MAX),
+    };
+    cws.push(cw); byEdge[light.edgeId]=cw;
+  }
+  crosswalkByEdge=byEdge; return cws;
+}
+function pedWalkActive(cw){ const l=lightByEdge[cw.edgeId]; return l?l.state==="red":true; }
+function pedPosition(p){
+  const cw=crosswalkById[p.crosswalkId],[e0,e1]=cw.endpoints;
+  const a=p.direction===1?e0:e1,b=p.direction===1?e1:e0;
+  return {x:a.x+(b.x-a.x)*p.progress,y:a.y+(b.y-a.y)*p.progress};
+}
+function crosswalkBlocked(id){ return peds.some(p=>p.crosswalkId===id&&p.state==="walking"); }
+function findPedObstacle(car){
+  const cw=crosswalkByEdge[car.edgeId];
+  if(!cw||!crosswalkBlocked(cw.id)) return null;
+  const gap=cw.t-car.t; if(gap<=0) return null;
+  return {car:{speed:0},gap};
+}
+function updatePedestrians(dt){
+  for(let i=peds.length-1;i>=0;i--){
+    const p=peds[i],cw=crosswalkById[p.crosswalkId];
+    if(p.state==="waiting"&&pedWalkActive(cw)) p.state="walking";
+    if(p.state==="walking"){ p.progress+=(p.speed*dt)/cw.width; if(p.progress>=1) peds.splice(i,1); }
+  }
+}
+function spawnPedestriansIfNeeded(dt){
+  for(const cw of crosswalks){
+    cw.spawnTimer-=dt; if(cw.spawnTimer>0) continue;
+    cw.spawnTimer=randRange(CONFIG.PED_SPAWN_MIN,CONFIG.PED_SPAWN_MAX);
+    const here=peds.reduce((n,p)=>n+(p.crosswalkId===cw.id?1:0),0);
+    if(here>=CONFIG.PED_MAX_PER_CW) continue;
+    const canWalk=pedWalkActive(cw);
+    if(canWalk||Math.random()<CONFIG.PED_WAIT_SPAWN_CHANCE){
+      peds.push({id:`ped_${pedCounter++}`,crosswalkId:cw.id,progress:0,
+        direction:Math.random()<0.5?1:-1,speed:CONFIG.PED_SPEED*(0.8+Math.random()*0.4),
+        state:canWalk?"walking":"waiting"});
+    }
+  }
+}
+
+// 実先行車 / 赤信号停止線 / 横断歩行者 のうち最も近い障害物
+function effectiveLead(car){
+  const cs=[findLeadCar(car),findStopObstacle(car),findPedObstacle(car)].filter(Boolean);
+  if(!cs.length) return null;
+  return cs.reduce((a,b)=>a.gap<=b.gap?a:b);
+}
+
+/* =========================================================================
+ *  描画
+ * ========================================================================= */
+function strokeOffsetLine(ctx,obj,offset,color,width,dash){
+  const cs=obj.centerSamples; ctx.strokeStyle=color; ctx.lineWidth=width;
+  ctx.setLineDash(dash||[]); ctx.beginPath();
+  for(let i=0;i<cs.length;i++){
+    const p=cs[i],nx=Math.cos(p.heading+Math.PI/2)*offset,ny=Math.sin(p.heading+Math.PI/2)*offset;
+    i===0?ctx.moveTo(p.x+nx,p.y+ny):ctx.lineTo(p.x+nx,p.y+ny);
+  }
+  ctx.stroke(); ctx.setLineDash([]);
+}
+function drawStreet(ctx,st){
+  const cs=st.centerSamples,total=st.laneWidth*st.laneCount;
+  ctx.lineJoin="round"; ctx.lineCap="round";
+  ctx.strokeStyle=COLORS.asphalt; ctx.lineWidth=total;
+  ctx.beginPath(); ctx.moveTo(cs[0].x,cs[0].y);
+  for(let i=1;i<cs.length;i++) ctx.lineTo(cs[i].x,cs[i].y);
+  ctx.stroke();
+}
+function drawStreetMarkings(ctx,st){
+  const total=st.laneWidth*st.laneCount;
+  strokeOffsetLine(ctx,st,+total/2,COLORS.edge,1.4);
+  strokeOffsetLine(ctx,st,-total/2,COLORS.edge,1.4);
+  strokeOffsetLine(ctx,st,0,COLORS.center,1.4,[11,9]);
+}
+function drawNodes(ctx){
+  const r=CONFIG.NODE_RADIUS+CONFIG.LANE_WIDTH/2;
+  ctx.fillStyle=COLORS.node;
+  for(const n of Object.values(net.nodes)){
+    ctx.beginPath(); ctx.arc(n.position.x,n.position.y,r,0,Math.PI*2); ctx.fill();
+  }
+}
+function roundRect(ctx,x,y,w,h,r){
+  ctx.beginPath(); ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+}
+function speedGradient(r){
+  r=Math.max(0,Math.min(1,r));
+  const a=r<0.5?COLORS.carSlow:COLORS.carMid,b=r<0.5?COLORS.carMid:COLORS.carFast;
+  const k=r<0.5?r/0.5:(r-0.5)/0.5,c=a.map((v,i)=>Math.round(v+(b[i]-v)*k));
+  return `rgb(${c[0]},${c[1]},${c[2]})`;
+}
+function carColor(car){
+  if(!ui.color.checked) return COLORS.carBody;
+  return speedGradient(car.maxSpeed>0?car.speed/car.maxSpeed:0);
+}
+function drawCar(ctx,car){
+  const e=net.edgeById[car.edgeId],p=sampleByT(e,car.t),L=CONFIG.CAR_LENGTH,W=CONFIG.CAR_WIDTH;
+  ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.heading);
+  ctx.fillStyle=carColor(car); roundRect(ctx,-L/2,-W/2,L,W,2.5); ctx.fill();
+  ctx.fillStyle=COLORS.carFront; roundRect(ctx,L/2-4,-W/2,4,W,2); ctx.fill();
+  ctx.restore();
+}
+function drawTrafficLights(ctx){
+  for(const light of trafficLights){
+    const e=net.edgeById[light.edgeId],stopT=e.length-CONFIG.STOP_LINE_OFFSET,c=sampleByT(e,stopT);
+    const half=CONFIG.LANE_WIDTH/2,nx=Math.cos(c.heading+Math.PI/2),ny=Math.sin(c.heading+Math.PI/2);
+    const color=LIGHT_COLOR[light.state];
+    ctx.strokeStyle=color; ctx.lineCap="round"; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(c.x-nx*half,c.y-ny*half); ctx.lineTo(c.x+nx*half,c.y+ny*half); ctx.stroke();
+    ctx.fillStyle=color; ctx.beginPath(); ctx.arc(c.x-nx*(half+4),c.y-ny*(half+4),2.6,0,Math.PI*2); ctx.fill();
+  }
+}
+function drawCrosswalks(ctx){
+  ctx.fillStyle=COLORS.crosswalk;
+  for(const cw of crosswalks){
+    const fwd={x:Math.cos(cw.heading),y:Math.sin(cw.heading)},
+          perp={x:Math.cos(cw.heading+Math.PI/2),y:Math.sin(cw.heading+Math.PI/2)};
+    const band=CONFIG.CROSSWALK_BAND,span=cw.width,stripes=5,hw=(span/stripes)*0.3;
+    for(let i=0;i<stripes;i++){
+      const frac=(i+0.5)/stripes-0.5,cx=cw.center.x+perp.x*frac*span,cy=cw.center.y+perp.y*frac*span;
+      ctx.beginPath();
+      [[band/2,hw],[band/2,-hw],[-band/2,-hw],[-band/2,hw]].forEach(([a,b],k)=>{
+        const x=cx+fwd.x*a+perp.x*b,y=cy+fwd.y*a+perp.y*b; k===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+      });
+      ctx.closePath(); ctx.fill();
+    }
+  }
+}
+function drawPedestrians(ctx){
+  for(const p of peds){
+    const pos=pedPosition(p);
+    ctx.fillStyle=p.state==="waiting"?COLORS.pedWait:COLORS.pedWalk;
+    ctx.beginPath(); ctx.arc(pos.x,pos.y,2.4,0,Math.PI*2); ctx.fill();
+  }
+}
+function drawGapLines(ctx,scale){
+  ctx.strokeStyle=COLORS.gapLine; ctx.lineWidth=1/scale;
+  for(const car of cars){
+    const lead=findLeadCar(car); if(!lead) continue;
+    const a=sampleByT(net.edgeById[car.edgeId],car.t),b=sampleByT(net.edgeById[lead.car.edgeId],lead.car.t);
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+  }
+}
+function drawGraph(ctx,scale){
+  // ノード内コネクタ（曲がり経路）
+  ctx.strokeStyle="rgba(90,209,200,0.28)"; ctx.lineWidth=1/scale; ctx.lineJoin="round";
+  for(const c of net.connectors){
+    const cs=c.centerSamples; if(cs.length<2) continue;
+    ctx.beginPath(); ctx.moveTo(cs[0].x,cs[0].y);
+    for(let i=1;i<cs.length;i++) ctx.lineTo(cs[i].x,cs[i].y);
+    ctx.stroke();
+  }
+  // エッジの向き矢印
+  ctx.strokeStyle=COLORS.edgeDir; ctx.fillStyle=COLORS.edgeDir; ctx.lineWidth=1/scale;
+  for(const e of net.edges){
+    const p=sampleByT(e,e.length*0.5),al=6/scale;
+    const hx=Math.cos(p.heading),hy=Math.sin(p.heading),px=-hy,py=hx;
+    ctx.beginPath();
+    ctx.moveTo(p.x+hx*al,p.y+hy*al);
+    ctx.lineTo(p.x-hx*al*0.6+px*al*0.5,p.y-hy*al*0.6+py*al*0.5);
+    ctx.lineTo(p.x-hx*al*0.6-px*al*0.5,p.y-hy*al*0.6-py*al*0.5);
+    ctx.closePath(); ctx.fill();
+  }
+  // ノードラベル
+  ctx.fillStyle=COLORS.nodeLabel; ctx.font=`${11/scale}px ui-monospace,monospace`;
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.strokeStyle=COLORS.nodeRing; ctx.lineWidth=1.5/scale;
+  for(const n of Object.values(net.nodes)){
+    const sig=n.incoming.length>=CONFIG.SIGNALIZE_MIN_DEGREE;
+    ctx.beginPath(); ctx.arc(n.position.x,n.position.y,16/scale,0,Math.PI*2); ctx.stroke();
+    ctx.fillText(n.id+(sig?"◆":""),n.position.x,n.position.y-22/scale);
+  }
+}
+
+/* =========================================================================
+ *  カメラ
+ * ========================================================================= */
+function computeCamera(cssW,cssH){
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  const m=CONFIG.LANE_WIDTH*CONFIG.LANE_COUNT/2;
+  for(const st of net.streets) for(const p of st.centerSamples){
+    minX=Math.min(minX,p.x-m); maxX=Math.max(maxX,p.x+m);
+    minY=Math.min(minY,p.y-m); maxY=Math.max(maxY,p.y+m);
+  }
+  const w=Math.max(1,maxX-minX),h=Math.max(1,maxY-minY),pad=CONFIG.CAMERA_PADDING;
+  const scale=Math.min((cssW-2*pad)/w,(cssH-2*pad)/h,CONFIG.CAMERA_MAX_SCALE);
+  return {scale,offsetX:(cssW-w*scale)/2-minX*scale,offsetY:(cssH-h*scale)/2-minY*scale};
+}
+
+/* =========================================================================
+ *  セットアップ
+ * ========================================================================= */
+const canvas=document.getElementById("canvas"),ctx=canvas.getContext("2d");
+let net=buildNetwork(NETWORK);
+let lightByEdge={},crosswalkByEdge={};
+let trafficLights=buildSignals();
+let crosswalks=buildCrosswalks();
+let crosswalkById=Object.fromEntries(crosswalks.map(c=>[c.id,c]));
+const peds=[]; let pedCounter=0; let simTime=0;
+
+// 車両をエッジ上に重ならないよう間隔配置して生成
+function spawnCars(count){
+  const slots=[];
+  for(const e of net.edges){
+    const n=Math.max(0,Math.floor(e.length/60));
+    for(let i=0;i<n;i++) slots.push({edgeId:e.id,t:i*60+20});
+  }
+  for(let i=slots.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [slots[i],slots[j]]=[slots[j],slots[i]]; }
+  const out=[];
+  for(let i=0;i<Math.min(count,slots.length);i++){
+    out.push({id:`car_${i}`,edgeId:slots[i].edgeId,t:slots[i].t,speed:0,
+      maxSpeed:CONFIG.DEFAULT_MAX_SPEED*(0.78+Math.random()*0.44),accel:0,nextEdgeId:null,state:"driving"});
+  }
+  return out;
+}
+let cars=spawnCars(CONFIG.NUM_CARS);
+
+// ネットワーク編集後の再構築（信号・横断歩道・歩行者・車をやり直す）
+function rebuild(refit){
+  net=buildNetwork(NETWORK);
+  trafficLights=buildSignals();
+  crosswalks=buildCrosswalks();
+  crosswalkById=Object.fromEntries(crosswalks.map(c=>[c.id,c]));
+  peds.length=0;
+  cars=spawnCars(CONFIG.NUM_CARS);
+  if(refit) cam=computeCamera(cssW,cssH);
+  renderStats();
+}
+
+let cssW=0,cssH=0,dpr=1,cam={scale:1,offsetX:0,offsetY:0};
+const ui={
+  pause:document.getElementById("chk-pause"),
+  color:document.getElementById("chk-color"),
+  graph:document.getElementById("chk-graph"),
+  gap:document.getElementById("chk-gap"),
+};
+const liveEl=document.getElementById("live");
+
+function resize(){
+  cssW=window.innerWidth; cssH=window.innerHeight; dpr=window.devicePixelRatio||1;
+  canvas.width=Math.round(cssW*dpr); canvas.height=Math.round(cssH*dpr);
+  canvas.style.width=cssW+"px"; canvas.style.height=cssH+"px";
+  if(!camUser) cam=computeCamera(cssW,cssH);   // 手動操作後は維持
+}
+
+/* =========================================================================
+ *  更新ループ
+ * ========================================================================= */
+function update(dt){
+  simTime+=dt;
+  for(const l of trafficLights) l.state=trafficLightState(l,simTime);
+  if(dt===0) return;
+
+  // ノード手前で次エッジを確定（前方先読みのため）
+  for(const car of cars){
+    const e=net.edgeById[car.edgeId];
+    if(e.length-car.t<CONFIG.NODE_LOOKAHEAD && !car.nextEdgeId)
+      car.nextEdgeId=chooseNextEdge(car.edgeId);
+  }
+  // 加速度
+  for(const car of cars) car.accel=idmAcceleration(car,effectiveLead(car));
+  // 積分 + エッジ遷移（ルーティング）
+  for(const car of cars){
+    car.speed=Math.min(Math.max(car.speed+car.accel*dt,0),car.maxSpeed);
+    car.t+=car.speed*dt;
+    let e=net.edgeById[car.edgeId],guard=0;
+    while(car.t>=e.length && guard++<8){       // 直進コネクタ(長さ≒0)を安全に通過
+      const nxt=car.nextEdgeId||chooseNextEdge(car.edgeId);
+      car.t-=e.length; car.edgeId=nxt; car.nextEdgeId=null; e=net.edgeById[car.edgeId];
+    }
+  }
+  updatePedestrians(dt); spawnPedestriansIfNeeded(dt);
+}
+
+function render(){
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle=COLORS.bg; ctx.fillRect(0,0,cssW,cssH);
+  ctx.translate(cam.offsetX,cam.offsetY); ctx.scale(cam.scale,cam.scale);
+
+  for(const st of net.streets) drawStreet(ctx,st);   // アスファルト
+  drawNodes(ctx);                                     // 交差点/角の床
+  for(const st of net.streets) drawStreetMarkings(ctx,st); // 区画線
+  drawCrosswalks(ctx);
+  drawTrafficLights(ctx);
+  for(const car of cars) drawCar(ctx,car);
+  drawPedestrians(ctx);
+
+  if(ui.gap.checked)   drawGapLines(ctx,cam.scale);
+  if(ui.graph.checked) drawGraph(ctx,cam.scale);
+  if(editMode)         drawEditor(ctx,cam.scale);
+}
+
+function renderStats(){
+  const sigNodes=Object.values(net.nodes).filter(n=>n.incoming.length>=CONFIG.SIGNALIZE_MIN_DEGREE).length;
+  document.getElementById("stats").innerHTML=
+    `ノード <b>${Object.keys(net.nodes).length}</b>　街路 <b>${net.streets.length}</b>　`+
+    `エッジ <b>${net.edges.length}</b><br>信号交差点 <b>${sigNodes}</b>　横断歩道 <b>${crosswalks.length}</b>`;
+}
+
+let last=performance.now();
+function loop(now){
+  const dt=Math.min((now-last)/1000,0.05); last=now;
+  update(ui.pause.checked?0:dt); render();
+  const sp=cars.map(c=>c.speed),avg=sp.reduce((a,b)=>a+b,0)/cars.length,min=Math.min(...sp);
+  liveEl.innerHTML=
+    `車両 <b>${cars.length}</b>台　歩行者 <b>${peds.length}</b>人<br>`+
+    `平均 v=<b>${avg.toFixed(0)}</b>　最低 v=<b>${min.toFixed(0)}</b>`;
+  requestAnimationFrame(loop);
+}
+
+/* =========================================================================
+ *  道路エディタ
+ * ========================================================================= */
+let editMode=false, selectedNode=null, hoverNode=null, mouseWorld=null;
+let camUser=false;                              // 手動でパン/ズームしたか
+const pointers=new Map();                       // pointerId -> {x,y}
+let panning=false, panStart=null, didPan=false, pinchDist=0, pinchMid=null;
+const CAM_MIN=0.15, CAM_MAX=5;
+let nodeCounter=Object.keys(NETWORK.nodes).length;
+
+function screenToWorld(sx,sy){ return {x:(sx-cam.offsetX)/cam.scale, y:(sy-cam.offsetY)/cam.scale}; }
+function nodeAtScreen(sx,sy){
+  let best=null,bd=14;
+  for(const [id,p] of Object.entries(NETWORK.nodes)){
+    const d=Math.hypot(sx-(p.x*cam.scale+cam.offsetX), sy-(p.y*cam.scale+cam.offsetY));
+    if(d<bd){ bd=d; best=id; }
+  }
+  return best;
+}
+function newNodeId(){ let id; do{ id=`N${++nodeCounter}`; }while(NETWORK.nodes[id]); return id; }
+function addNode(x,y){ const id=newNodeId(); NETWORK.nodes[id]={x:Math.round(x),y:Math.round(y)}; return id; }
+function streetExists(a,b){ return NETWORK.streets.some(s=>(s.a===a&&s.b===b)||(s.a===b&&s.b===a)); }
+function addStreet(a,b){ if(a!==b && !streetExists(a,b)) NETWORK.streets.push({a,b}); }
+function deleteNode(id){
+  delete NETWORK.nodes[id];
+  NETWORK.streets=NETWORK.streets.filter(s=>s.a!==id&&s.b!==id);
+  if(selectedNode===id) selectedNode=null;
+}
+function pointSegDistScreen(px,py,a,b){
+  const ax=a.x*cam.scale+cam.offsetX, ay=a.y*cam.scale+cam.offsetY;
+  const bx=b.x*cam.scale+cam.offsetX, by=b.y*cam.scale+cam.offsetY;
+  const dx=bx-ax, dy=by-ay, L2=dx*dx+dy*dy;
+  let t=L2>0?((px-ax)*dx+(py-ay)*dy)/L2:0; t=Math.max(0,Math.min(1,t));
+  return Math.hypot(px-(ax+dx*t), py-(ay+dy*t));
+}
+function streetAtScreen(sx,sy){
+  let best=-1,bd=10;
+  NETWORK.streets.forEach((s,i)=>{
+    const a=NETWORK.nodes[s.a],b=NETWORK.nodes[s.b]; if(!a||!b) return;
+    const d=pointSegDistScreen(sx,sy,a,b); if(d<bd){ bd=d; best=i; }
+  });
+  return best;
+}
+function relXY(e){ const r=canvas.getBoundingClientRect(); return [e.clientX-r.left, e.clientY-r.top]; }
+function midInCanvas(a,b){ const r=canvas.getBoundingClientRect(); return {x:(a.x+b.x)/2-r.left, y:(a.y+b.y)/2-r.top}; }
+function zoomAt(sx,sy,f){
+  const ns=Math.min(Math.max(cam.scale*f,CAM_MIN),CAM_MAX);
+  const wx=(sx-cam.offsetX)/cam.scale, wy=(sy-cam.offsetY)/cam.scale;
+  cam.scale=ns; cam.offsetX=sx-wx*ns; cam.offsetY=sy-wy*ns; camUser=true;
+}
+function fitView(){ cam=computeCamera(cssW,cssH); camUser=false; }
+
+// 編集モードのタップ：ノード追加 / 接続 / 選択
+function handleEditTap(mx,my){
+  const hit=nodeAtScreen(mx,my);
+  if(hit){
+    if(selectedNode&&selectedNode!==hit){ addStreet(selectedNode,hit); selectedNode=hit; rebuild(false); }
+    else selectedNode=(selectedNode===hit?null:hit);
+  } else {
+    const w=screenToWorld(mx,my), id=addNode(w.x,w.y);
+    if(selectedNode) addStreet(selectedNode,id);
+    selectedNode=id; rebuild(false);
+  }
+}
+
+canvas.addEventListener("pointerdown",e=>{
+  pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(pointers.size===2){                        // ピンチ開始
+    const [a,b]=[...pointers.values()];
+    pinchDist=Math.hypot(a.x-b.x,a.y-b.y); pinchMid=midInCanvas(a,b);
+    panning=false; didPan=true;
+  } else if(pointers.size===1 && e.button===0){ // ドラッグでパン開始
+    panning=true; didPan=false;
+    panStart={x:e.clientX,y:e.clientY,ox:cam.offsetX,oy:cam.offsetY};
+    canvas.setPointerCapture(e.pointerId);
+  }
+});
+canvas.addEventListener("pointermove",e=>{
+  if(pointers.has(e.pointerId)){ const p=pointers.get(e.pointerId); p.x=e.clientX; p.y=e.clientY; }
+  if(editMode && pointers.size<2){ const [mx,my]=relXY(e); hoverNode=nodeAtScreen(mx,my); mouseWorld=screenToWorld(mx,my); }
+  if(pointers.size===2){                         // ピンチズーム + パン
+    const [a,b]=[...pointers.values()];
+    const nd=Math.hypot(a.x-b.x,a.y-b.y), nm=midInCanvas(a,b);
+    if(pinchDist>0) zoomAt(nm.x,nm.y, nd/pinchDist);
+    if(pinchMid){ cam.offsetX+=nm.x-pinchMid.x; cam.offsetY+=nm.y-pinchMid.y; camUser=true; }
+    pinchDist=nd; pinchMid=nm; return;
+  }
+  if(panning && panStart){
+    const dx=e.clientX-panStart.x, dy=e.clientY-panStart.y;
+    if(Math.hypot(dx,dy)>4) didPan=true;
+    cam.offsetX=panStart.ox+dx; cam.offsetY=panStart.oy+dy; camUser=true;
+  }
+});
+function endPointer(e){
+  const wasTap = editMode && e.button===0 && !didPan && panning && pointers.size===1;
+  if(wasTap){ const [mx,my]=relXY(e); handleEditTap(mx,my); }
+  pointers.delete(e.pointerId);
+  if(pointers.size<2){ pinchDist=0; pinchMid=null; }
+  if(pointers.size===0){ panning=false; panStart=null; didPan=false; }
+}
+canvas.addEventListener("pointerup",endPointer);
+canvas.addEventListener("pointercancel",e=>{ pointers.delete(e.pointerId); if(pointers.size<2){pinchDist=0;pinchMid=null;} if(pointers.size===0){panning=false;panStart=null;didPan=false;} });
+canvas.addEventListener("wheel",e=>{ e.preventDefault(); const [mx,my]=relXY(e); zoomAt(mx,my, e.deltaY<0?1.12:1/1.12); },{passive:false});
+
+canvas.addEventListener("contextmenu",e=>{
+  if(!editMode) return; e.preventDefault();
+  const [mx,my]=relXY(e), hit=nodeAtScreen(mx,my);
+  if(hit){ deleteNode(hit); rebuild(false); return; }
+  const si=streetAtScreen(mx,my);
+  if(si>=0){ NETWORK.streets.splice(si,1); rebuild(false); }
+});
+window.addEventListener("keydown",e=>{
+  if(!editMode) return;
+  if(e.key==="Escape") selectedNode=null;
+  else if(e.key==="Enter"){ e.preventDefault(); setEditMode(false); }
+});
+
+function updateEditButton(){
+  const b=document.getElementById("btn-edit");
+  b.classList.toggle("on",editMode);
+  b.textContent=editMode?"編集を完了 (Enter)":"道路を編集";
+}
+function setEditMode(on){
+  editMode=on; selectedNode=null; hoverNode=null;
+  document.getElementById("edit-help").style.display=on?"block":"none";
+  canvas.style.cursor=on?"crosshair":"grab";
+  if(!on && !camUser) cam=computeCamera(cssW,cssH);   // 手動移動していなければ再フィット
+  updateEditButton();
+}
+function drawEditor(ctx,scale){
+  for(const [id,p] of Object.entries(NETWORK.nodes)){
+    let col="rgba(90,209,200,0.55)", rr=7/scale, lw=1.5/scale;
+    if(id===selectedNode){ col="#5ad1c8"; rr=9/scale; lw=2.5/scale; }
+    else if(id===hoverNode){ col="#8be6de"; rr=8/scale; }
+    ctx.strokeStyle=col; ctx.lineWidth=lw;
+    ctx.beginPath(); ctx.arc(p.x,p.y,rr,0,Math.PI*2); ctx.stroke();
+  }
+  if(selectedNode&&mouseWorld){
+    const s=NETWORK.nodes[selectedNode];
+    ctx.strokeStyle="rgba(90,209,200,0.55)"; ctx.lineWidth=1.5/scale;
+    ctx.setLineDash([6/scale,5/scale]);
+    ctx.beginPath(); ctx.moveTo(s.x,s.y); ctx.lineTo(mouseWorld.x,mouseWorld.y); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+document.getElementById("btn-edit").addEventListener("click",()=>{
+  setEditMode(!editMode);
+});
+document.getElementById("btn-reset").addEventListener("click",()=>{
+  NETWORK.nodes=JSON.parse(JSON.stringify(DEFAULT_NETWORK.nodes));
+  NETWORK.streets=JSON.parse(JSON.stringify(DEFAULT_NETWORK.streets));
+  nodeCounter=Object.keys(NETWORK.nodes).length;
+  selectedNode=null; camUser=false; rebuild(true);
+});
+document.getElementById("btn-fit").addEventListener("click",fitView);
+document.getElementById("btn-zoomin").addEventListener("click",()=>zoomAt(cssW/2,cssH/2,1.25));
+document.getElementById("btn-zoomout").addEventListener("click",()=>zoomAt(cssW/2,cssH/2,1/1.25));
+
+window.addEventListener("resize",resize);
+resize(); renderStats(); requestAnimationFrame(loop);
+</script>
+</body>
+</html>

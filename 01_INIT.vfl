@@ -1,0 +1,64 @@
+// ════════════════════════════════════════════════════
+// INIT: 車両生成時（初回のみ）実行
+// 全 attribute の初期値を定義する唯一の場所
+// ════════════════════════════════════════════════════
+if (i@initialized == 1) return;
+i@initialized = 1;
+
+//To identify geo as car
+i@car = 1;
+
+// ── 状態管理 ──────────────────────────────────────────
+i@car_state     = 0;    // 0=CRUISING  1=BRAKING  2=STOPPED
+i@yellow_commit = 0;    // 0=通常停止判断  1=黄色通過コミット済み
+
+// ── 信号情報（SIGNAL DETECTが毎フレーム上書き） ────────
+i@signal_ptnum   = -1;
+i@signal_state   = -1;
+f@dist_to_signal = 9999.0;
+
+// ── 歩行者情報（CROSSING DETECTが毎フレーム上書き） ────
+i@ped_ptnum    = -1;
+i@ped_crossing =  0;
+f@dist_to_ped  = 9999.0;
+
+// ── 前車情報（CAR DETECTが毎フレーム上書き） ────
+i@car_ptnum   = -1;
+f@dist_to_car = 9999.0;
+i@car_signal  = -1;
+
+// ── 交錯点情報（直進車のみ。RESOLVE_CONFLICTが毎フレーム更新、
+//    03_UPDATE_LANE_ATTRIBがlane_changed時にリセット・再取得） ────
+i@passed             = 0;
+i@passed_frame_count = 0;
+v@cross_pos          = {0, 0, 0};
+
+// ── 右折コンフリクト判断（右折車のみ。RESOLVE_CONFLICTが毎フレーム更新、
+//    03_UPDATE_LANE_ATTRIBがlane_changed時にcross_linesと同じ長さで再取得） ────
+// M5-1: 1本の右折レーンが複数の直進レーンと交錯しうる（cross_linesが複数値）ため、
+//   判断ラッチは cross_lines と同じ index で1本ずつ独立に持つ配列にしてある。
+i[]@rt_decided     = {};   // 各indexごと 0=none 1=yield 2=go
+i[]@rt_target_id   = {};   // 各indexごと、判断を保持中の相手車（@id）。いなければ-1
+i[]@rt_target_lock = {};   // ↑を捕捉した瞬間に確定したblocking判定（以後保持）
+v[]@rt_target_cp   = {};
+i@yield_conflict   = 0;    // 集約値：いずれかのindexがyield中なら1
+f@dist_to_conflict = 9999.0;  // 集約値：yield中のindexのうち最も近い交錯点までの距離
+
+// ── 物理パラメータ（車両ごとにランダム化） ───────────────
+// ★ max_speed_kmh / avg_speed_kmh の2つだけ設定すれば、他の速度系パラメータ
+//   （min_curve_speed, right_turn_speedなど。010_INTEGRATE参照）もそこから自動算出される。
+//   max_speedは車ごとに[lo, hi]の一様乱数：hi=max_speed_kmh、平均がavg_speed_kmhに
+//   なるようlo=2*avg-hiで逆算している。
+float max_speed_kmh = chf("max_speed_kmh");   // 例: 50
+float avg_speed_kmh = chf("avg_speed_kmh");   // 例: 40
+float v_max = max_speed_kmh / 3.6;
+float v_avg = avg_speed_kmh / 3.6;
+float v_lo  = max(2.0 * v_avg - v_max, 0.1);  // 一様分布の平均がv_avgになる下限
+
+f@max_speed     = fit01(rand(@id + 0.73), v_lo, v_max);  // m/s
+f@max_accel     = fit01(rand(@id + 0.31),  0.7,  1.2);   // m/s²
+f@max_decel     = fit01(rand(@id + 0.31),  0.9,  1.5);   // m/s²
+
+// ── 速度（INTEGRATEが毎フレーム更新） ─────────────────
+f@vel   = 0.0;
+f@accel = 0.0;
