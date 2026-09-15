@@ -9,7 +9,7 @@
 | [[00_STRUCTURE]] | 全体の一言サマリ：信号機・歩行者を検知し、そのアトリビュートを後続ノードで処理して速度などを制御 |
 | [[01_INIT]] | 車両生成時（初回のみ）に全attributeの初期値を定義する唯一の場所 |
 | [[02_CHANGE ROAD]] | 今いるスプラインの末端に来たら、次のレーンに切り替える（`lane_name`更新、`lane_changed`フラグを立てる） |
-| [[03_UPDATE_LANE_ATTRIB]] | `lane_changed`直後だけ`lane_id`を再解決し`next_lane_name`を1回だけ決める。毎フレーム`dir`/`curv`/`turn`をレーンネットワークから取得（2026-09-10: 主キーを`src_id`から`lane_id`に変更） |
+| [[03_UPDATE_LANE_ATTRIB]] | `lane_changed`直後だけ`lane_id`を再解決し`next_lane_name`を1回だけ決める。毎フレーム`dir`/`curv`/`turn`をレーンネットワークから取得（2026-09-10: 主キーを`src_id`から`lane_id`に変更）。`cross_pos`/`cross_lines`もRoad Line(Input 1)側から取得し、Input 3(歩行者ジオメトリ)は使わない（M6c） |
 | [[04_SIGNAL DETECT]] | 同じレーンの信号機を検索し、状態・距離を取得 |
 | [[05_HUMAN DETECT]] | 自分のレーンを横断中の歩行者を検知 |
 | [[06_CAR DETECT]] | 同レーン先行車・交差/右左折車の中から最も近い1台を検出 |
@@ -19,6 +19,7 @@
 | [[010_INTEGRATE]] | 速度・位置を積分して更新 |
 | [[011_COLORIZE]] | `car_state`等からビューポート表示色(`Cd`)を決定 |
 | [[11_CONNECT_LANE]] | 道路ネットワーク生成側：交差点の入口/出口点から接続曲線(コネクタ)を作り、`next_lanes`・`cross_lines`等の交差点まわりの属性を配る |
+| [[12_BAKE_CROSS_POS]] | 道路ネットワーク生成側：直進レーンの交錯点座標を`cross_pos`としてRoad Line側（point/prim両方）に焼き込む。従来は車が`lane_changed`時に交錯点ジオメトリへ`nearpoint`していたが、右折車がlane_idキーで直接引けるようにするためのベイク（M6b） |
 
 **RESOLVE_CONFLICT（右折 vs 直進コンフリクト解決の設計ドキュメント）**
 
@@ -51,7 +52,7 @@
 
 01_INIT → 02_CHANGE ROAD → 03_UPDATE_LANE_ATTRIB → 04_SIGNAL DETECT → 05_HUMAN DETECT → 06_CAR DETECT → 07_RESOLVE_CONFLICT → 08_STATE → 09_ACCEL → 010_INTEGRATE → 011_COLORIZE
 
-（`11_CONNECT_LANE`は上記と別系統：車両シミュレーション本体ではなく、道路ネットワークジオメトリを事前生成するSOP側の処理）
+（`11_CONNECT_LANE` / `12_BAKE_CROSS_POS` は上記と別系統：車両シミュレーション本体ではなく、道路ネットワークジオメトリを事前生成するSOP側の処理。`12_BAKE_CROSS_POS`は`11_CONNECT_LANE`の後段、車Solverより前に1回だけ通す）
 
 ---
 
@@ -89,7 +90,7 @@
 | `rt_decided` | int[] | 右折車の判断ラッチ。`cross_lines`と同じindexで1本ずつ独立：0=none/1=yield/2=go（M5-1） | 01, 03（`lane_changed`時に`cross_lines`と同じ長さで作り直す）, 07 |
 | `rt_target_id` | int[] | 各indexごと、判断を保持中の相手車の`id`（いなければ-1） | 01, 03, 07 |
 | `rt_target_lock` | int[] | 各indexごと、`rt_target_id`捕捉時に確定したblocking判定（以後保持） | 01, 03, 07 |
-| `rt_target_cp` | vector[] | 各indexごと、`rt_target_id`に対応する交錯点座標（キャッシュ） | 01, 03, 07 |
+| `rt_target_cp` | vector[] | 各indexごと、この交錯レーン固有の交錯点座標。`cross_lines`確定と同時にRoad Line側の`cross_pos`(prim)から1回だけ取得する固定値で、追跡中の相手車個体には依存しない（M6b） | 01, 03（`lane_changed`時に確定）, 07（読むだけ） |
 | `yield_conflict` / `dist_to_conflict` | int/float | 右折車がコンフリクトのため譲るべきか・対象交錯点までの距離。`rt_decided[]`のうちyield中のものを集約したスカラー値（最も近いものを採用）。08_STATEが読む（M4実装済み、ctrl_src=3） | 01, 07, 08 |
 | `col` | int | `accel<0`で1、`vel<0.05`で2。**ヴォルト内のどこからも読まれていない**（用途不明、デバッグ/ビューポート着色用の可能性） | 09 |
 | `max_speed` / `max_accel` / `max_decel` | float | 車両ごとにランダム化された物理パラメータ | 01, 09, 010 |
@@ -124,6 +125,7 @@
 | `is_connector` / `is_curved` | int | 接続線か／曲がっているか |
 | `cross_lines`(prim) | int[] | 右折レーン（曲線）が交錯する直進レーンの`lane_id`一覧。**既存**（本ヴォルトのコードでは作られていない、Houdini側で焼き込み済み） |
 | `cross_curve`(prim) | int | 直進レーンが交錯する右折レーンの`lane_id`。**既存**（同上） |
+| `cross_pos`(point/prim) | vector | 直進レーンの交錯点座標。[[12_BAKE_CROSS_POS]]が本ヴォルトのコードで焼き込む（M6b。上記2つと違い、このリポジトリで生成する） |
 | グループ | - | `connectors` / `curved` / `straight` / `corner` |
 
 ### 3.3 信号機（Input 3rd = Traffic Signal。Solver内ではInput 2として参照される）

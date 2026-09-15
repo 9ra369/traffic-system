@@ -1,6 +1,9 @@
 // ════════════════════════════════════════════════════
-// Input 1: Road Line  (src_id, lane_id, dir, curv, turn, next_lanes)
-// Input 3: Pedestrian (歩行者。"cross"グループ点＝直進レーンの交錯点、lane_name一致で引く)
+// Input 1: Road Line  (src_id, lane_id, dir, curv, turn, next_lanes,
+//                       cross_pos(prim)＝12_BAKE_CROSS_POS.vflで焼き込み済み。M6b/M6c)
+// ★ M6c: cross_posの取得元をInput 3(歩行者ジオメトリ)からInput 1(Road Line)に統一した
+//   ため、このファイルはもうInput 3を使わない（他ノード=05_HUMAN DETECT等は従来通り
+//   Input 3を使うので、そちら側の配線は変更不要）。
 // ════════════════════════════════════════════════════
 //
 // ★ レーン追跡の主キーは lane_id（分割・交差点コネクタ生成後の、最終的な1本1本の
@@ -43,25 +46,38 @@ if (i@lane_changed == 1) {
             i@passed             = 0;
             i@passed_frame_count = 0;
             v@cross_pos          = {0, 0, 0};
-            // 交錯点はInput 3(歩行者ジオメトリ)の"cross"グループ点。
-            // lane_name一致で1個引く（歩行者のcrossing検索と同じ入力・同じパターン）
-            int cp = nearpoint(3, "cross && @lane_name=" + s@lane_name, @P);
-            if (cp >= 0) {
-                v@cross_pos = point(3, "P", cp);
+
+            // 今のprim（lane_name一致＋現在地に最も近い点なので、今まさに乗っているprim
+            // ＝コネクタなら曲線側を確実に指す）。cross_pos/cross_lines共通で使う。
+            int pr[] = pointprims(1, pt);
+
+            // ★ M6c: 交錯点はRoad Line側に焼き込み済みのcross_pos(prim)を直接読む
+            //   （12_BAKE_CROSS_POS.vfl参照）。旧: Input 3(歩行者ジオメトリ)の"cross"
+            //   グループ点へのnearpoint。右折車側(M6b)と取得元を揃え、Input 3への
+            //   依存とnearpoint検索を無くした。
+            //   ★ s@turnでは絞らない：この時点のs@turnはまだ前のレーンの値のまま
+            //   （更新は本ファイル末尾の毎フレームブロックで、このif全体より後）。
+            //   右折レーンのprimはcross_pos未設定＝既定値{0,0,0}が返るだけなので、
+            //   絞らなくても実害はない（v@cross_posは直進車以外どこからも読まれない）。
+            if (len(pr) > 0) {
+                v@cross_pos = prim(1, "cross_pos", pr[0]);
             }
 
             // ★ M2: 右折レーンのcross_linesをキャッシュ（直進レーンでは既定の空配列のまま）
-            //   ptのprimを見る（lane_name一致＋現在地に最も近い点なので、今まさに
-            //   乗っているprim＝コネクタなら曲線側を確実に指す）。
-            i[]@cross_lines = {};
-            int pr[] = pointprims(1, pt);
+            int cross_lines_local[] = {};
             if (len(pr) > 0) {
-                i[]@cross_lines = prim(1, "cross_lines", pr[0]);
+                cross_lines_local = prim(1, "cross_lines", pr[0]);
             }
+            i[]@cross_lines = cross_lines_local;
 
             // ★ M5-1: cross_linesと同じ長さ・同じindexで判断ラッチ配列を作り直す
             //   （右折区間に入り直すたび、前の交差点の状態を引きずらないようゼロから積む）
-            int    n_cross = len(i[]@cross_lines);
+            // ★ M6b: rt_target_cpは「今たまたま近くにいる直進車個体が持つcross_pos」を
+            //   毎フレーム読みに行くのではなく、cross_lines確定と同時に、Road Line側に
+            //   焼き込み済みのcross_pos(prim)をlane_idキーで直接引いて1回だけ確定する
+            //   （12_BAKE_CROSS_POS.vfl参照）。交錯点は道路形状だけで決まる値なので、
+            //   対応する直進車が今いるかどうかに判断が左右されなくなる。
+            int    n_cross = len(cross_lines_local);
             int    new_decided[]     = {};
             int    new_target_id[]   = {};
             int    new_target_lock[] = {};
@@ -70,7 +86,17 @@ if (i@lane_changed == 1) {
                 append(new_decided,     0);
                 append(new_target_id,   -1);
                 append(new_target_lock, 0);
-                append(new_target_cp,   {0, 0, 0});
+
+                vector cp_pos = {0, 0, 0};
+                int    opp_lane = cross_lines_local[ci];
+                int    opp_pt   = findattribval(1, "point", "lane_id", opp_lane);
+                if (opp_pt >= 0) {
+                    int opp_pr[] = pointprims(1, opp_pt);
+                    if (len(opp_pr) > 0) {
+                        cp_pos = prim(1, "cross_pos", opp_pr[0]);
+                    }
+                }
+                append(new_target_cp, cp_pos);
             }
             i[]@rt_decided     = new_decided;
             i[]@rt_target_id   = new_target_id;

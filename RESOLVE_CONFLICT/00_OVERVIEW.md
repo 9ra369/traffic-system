@@ -25,7 +25,7 @@
 | `dist_to_conflict` | point（車、右折車） | 譲る対象の交錯点までの距離 |
 | `lane_id` | point（車、全車） | 現在のレーンID。`cross_lines`とのlane_id照合用に03_UPDATE_LANE_ATTRIBで取得。2026-09-10からレーン追跡そのものの主キー（旧`src_id`）も兼ねる（詳細 → 下記「決定事項（追記2）」） |
 | `cross_lines` | point（車、右折車のみ） | 右折レーンの同名prim属性をlane_changed時にキャッシュした配列 |
-| `rt_decided` / `rt_target_id` / `rt_target_lock` / `rt_target_cp` | point（車、右折車のみ。配列。`cross_lines`と同じ長さ・同じindex） | M2の内部状態。相手レーンごとに独立してロックを持つ（M5-1、詳細 → [[M2_right_turn_search]] / [[M5_multi_lane_and_queue]]） |
+| `rt_decided` / `rt_target_id` / `rt_target_lock` / `rt_target_cp` | point（車、右折車のみ。配列。`cross_lines`と同じ長さ・同じindex） | M2の内部状態。相手レーンごとに独立してロックを持つ（M5-1、詳細 → [[M2_right_turn_search]] / [[M5_multi_lane_and_queue]]）。`rt_target_cp`だけは追跡中の相手車ではなくRoad Line側の`cross_pos`(prim)から取得する固定値（M6b、詳細 → [[M6_t_ego]]） |
 
 **決定事項**
 - `cross_pos`（交錯点の世界座標）は初回（`lane_changed`時）に1回だけ取得してキャッシュする。
@@ -67,8 +67,9 @@
 | M3 | 直進車→右折車：保険的減速の検知アルゴリズム — **検討の結果、不要と判断** | [[M3_straight_car_guard]] |
 | M4 | `08_STATE` への統合 — **実装済み** | [[M4_state_integration]] |
 | M5 | 複数交錯点・複数右折車の待ち行列 — **1は実装済み。2, 3は方針決定済みで実装課題なし。4はスコープ外** | [[M5_multi_lane_and_queue]] |
+| M6 | t_ego導入 — 固定TTC閾値ではなく自車の到達時間との相対比較でblockingを判定 — **実装済み** | [[M6_t_ego]] |
 
-M1→M2→M4 の順で依存している（M2はM1の`passed`を前提に検索から除外を行うため）。M3は不採用。
+M1→M2→M4 の順で依存している（M2はM1の`passed`を前提に検索から除外を行うため）。M3は不採用。M6はM2の判定式を差し替える改修。
 
 ## 全体を通しての設計方針（RESOLVE_CRUSHからの転用）
 
