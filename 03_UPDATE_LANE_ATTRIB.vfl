@@ -1,6 +1,7 @@
 // ════════════════════════════════════════════════════
 // Input 1: Road Line  (src_id, lane_id, dir, curv, turn, next_lanes,
-//                       cross_pos(prim)＝12_BAKE_CROSS_POS.vflで焼き込み済み。M6b/M6c)
+//                       cross_pos(prim)＝12_BAKE_CROSS_POS.vflで焼き込み済み。M6b/M6c。
+//                       1レーンが複数の交錯点を持ちうるため配列。ここでは先頭要素のみ使用)
 // ★ M6c: cross_posの取得元をInput 3(歩行者ジオメトリ)からInput 1(Road Line)に統一した
 //   ため、このファイルはもうInput 3を使わない（他ノード=05_HUMAN DETECT等は従来通り
 //   Input 3を使うので、そちら側の配線は変更不要）。
@@ -59,8 +60,13 @@ if (i@lane_changed == 1) {
             //   （更新は本ファイル末尾の毎フレームブロックで、このif全体より後）。
             //   右折レーンのprimはcross_pos未設定＝既定値{0,0,0}が返るだけなので、
             //   絞らなくても実害はない（v@cross_posは直進車以外どこからも読まれない）。
+            //   ★ 12_BAKE_CROSS_POSでcross_pos(prim)が配列化（1レーンが複数の交錯点を
+            //   持ちうる）されたため、ここでは先頭要素だけを使う（複数対応は未実装）。
             if (len(pr) > 0) {
-                v@cross_pos = prim(1, "cross_pos", pr[0]);
+                vector cp_candidates[] = prim(1, "cross_pos", pr[0]);
+                if (len(cp_candidates) > 0) {
+                    v@cross_pos = cp_candidates[0];
+                }
             }
 
             // ★ M2: 右折レーンのcross_linesをキャッシュ（直進レーンでは既定の空配列のまま）
@@ -93,7 +99,12 @@ if (i@lane_changed == 1) {
                 if (opp_pt >= 0) {
                     int opp_pr[] = pointprims(1, opp_pt);
                     if (len(opp_pr) > 0) {
-                        cp_pos = prim(1, "cross_pos", opp_pr[0]);
+                        // ★ cross_pos(prim)は配列化済み（1レーンが複数の交錯点を持ちうる）。
+                        //   先頭要素を使う（複数対応は未実装）。
+                        vector opp_cp_candidates[] = prim(1, "cross_pos", opp_pr[0]);
+                        if (len(opp_cp_candidates) > 0) {
+                            cp_pos = opp_cp_candidates[0];
+                        }
                     }
                 }
                 append(new_target_cp, cp_pos);

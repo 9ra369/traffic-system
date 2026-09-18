@@ -154,6 +154,7 @@ if (s@turn != "right") {
             // 着くまでの時間との相対比較でblockingを決める。交錯点(t_cp)はRoad Line側に
             // 焼き込み済みの値（M6b）で、両者に共通の同じ世界座標点。
             // 詳細・積み残し → RESOLVE_CONFLICT/M6_t_ego.md
+        
             float e_dist = distance(t_cp, @P);
             float t_ego;
             if (i@car_state >= 1 && f@vel < vel_stopped) {

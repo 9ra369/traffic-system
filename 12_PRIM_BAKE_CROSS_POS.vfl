@@ -1,0 +1,7 @@
+// point属性cross_posをprim属性へ複製（スプラインなので1prim=1レーン。先頭点から1回読む）
+// (1/2)で交錯点なしのレーンはpoint属性を持たない → prim属性も付けず挙動を揃える
+if (!haspointattrib(0, "cross_pos")) return;
+int pt = primpoint(0, @primnum, 0);
+vector cp[] = point(0, "cross_pos", pt);
+if (len(cp) == 0) return;
+v[]@cross_pos = cp;

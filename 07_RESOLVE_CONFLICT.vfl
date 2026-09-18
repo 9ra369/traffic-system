@@ -14,9 +14,10 @@
 //      i@yield_conflict, f@dist_to_conflict（右折車、全indexを集約した値。M4が読む）
 // ════════════════════════════════════════════════════
 
-// M1: 直進車の passed 判定（旧ahead。名前を変更）
 //   cross_pos/passedのリセット・再取得は lane_changed の瞬間に行う
 //   （03_UPDATE_LANE_ATTRIB.vfl の lane_changed ブロックに実装済み）。
+
+//直進車と交錯点の位置関係の判断
 if (s@turn == "straight" && i@passed == 0) {
     vector to_cross = v@cross_pos - @P;
     float  d = dot(normalize(v@dir), normalize(to_cross));
@@ -24,7 +25,7 @@ if (s@turn == "straight" && i@passed == 0) {
     if (d <= 0) {
         // 交錯点はもう後方 → 通過。15フレーム連続で確認できたら確定する
         i@passed_frame_count += 1;
-        if (i@passed_frame_count >= 24) {
+        if (i@passed_frame_count >= 15) {
             i@passed             = 1;
             i@passed_frame_count = 0;   // 確定したのでカウントは掃除しておく
         }
@@ -45,6 +46,8 @@ if (s@turn == "straight" && i@passed == 0) {
 //   Road Line側から確定済み）。08_STATEが読む
 //   i@yield_conflict/f@dist_to_conflictは、全indexのうちyield中のものだけを見て
 //   「最も近い交錯点」に集約する。
+
+
 if (s@turn != "right") {
     // 右折区間を抜けた（またはそもそも右折でない）→ 状態を一律クリアしておく
     // （次に別の交差点で右折を始めたときにゼロから評価し直すため）
@@ -57,15 +60,15 @@ if (s@turn != "right") {
 } else {
     float road_width    = 3.5;
     float search_radius = 36;   // 要チューニング
-    float safety_margin = 1.0;                // s（t_other < t_ego + margin でblocking。M6。要チューニング）
-    float v_floor        = 1;               // m/s
+    float safety_margin = 3.0;                // s（t_other < t_ego + margin でblocking。M6。要チューニング）
+    float v_floor        = 1.5;               // m/s
     float vel_stopped    = 0.1;               // m/s（これ未満は停止中とみなす。M6）
-    float stop_margin    = 1.2;               // m（交錯点手前、これを切ったら止まらず抜ける）
+    float stop_margin    = 1.5;               // m（交錯点手前、これを切ったら止まらず抜ける）
 
+    // 検知の候補となるポイントを検索
     int cands[] = nearpoints(0, @P, search_radius);   // indexループ全体で使い回す
 
-    // 配列attributeへのindex書き込みは避け、ローカル配列にコピー→ループ内で更新→
-    // 最後にまとめて書き戻す（02_BAKE_CONFLICTS_TO_LANE.vflと同じ流儀）。
+    // ローカル配列にコピー
     int    lanes[]        = i[]@cross_lines;
     int    in_decided[]     = i[]@rt_decided;
     int    in_target_id[]   = i[]@rt_target_id;
@@ -79,7 +82,7 @@ if (s@turn != "right") {
 
     int   any_yield  = 0;
     float best_dist  = 9999.0;
-    int   n_cross    = len(lanes);
+    int   n_cross    = len(lanes); // 合計レーン数
 
     for (int idx = 0; idx < n_cross; idx++) {
         int    opp_lane  = lanes[idx];
@@ -95,10 +98,11 @@ if (s@turn != "right") {
         int   nearest_pt            = -1;
         float nearest_d             = 9999.0;
 
+        // 候補の直進車探し
         foreach (int pt; cands) {
-            if (pt == @ptnum) continue;
-            if (point(0, "passed", pt) == 1) continue;
-            if (point(0, "lane_id", pt) != opp_lane) continue;
+            if (pt == @ptnum) continue; // 自分のポイント
+            if (point(0, "passed", pt) == 1) continue; // 通過済みの車
+            if (point(0, "lane_id", pt) != opp_lane) continue; // 自分のlane_idがcorss_lanesになかったら、除外
 
             any_candidate = 1;
             if (point(0, "id", pt) == t_id) { target_seen_this_frame = 1; target_pt = pt; }
@@ -108,8 +112,6 @@ if (s@turn != "right") {
         }
 
         // ロック中の相手が候補集合から消えた（通過 or 検索半径外）→ 解除して次点を拾えるようにする
-        // t_cpはリセットしない：M6bでRoad Line側のcross_pos(prim)から確定した、
-        // この交錯レーン(index)固有の値であり、追跡中の相手車個体とは無関係。
         if (t_id >= 0 && !target_seen_this_frame) {
             t_id   = -1;
             t_lock = 0;
@@ -126,16 +128,18 @@ if (s@turn != "right") {
         //   本当に危険になっても気づけなかった）。t_decidedはyield→goに自動で戻さない
         //   ので、ここでt_lockが0↔1を行き来してもblockingの一方通行(go→yield昇格)は
         //   崩れず、「進んでは止まる」の往復は起きない。
+
+
         if (t_id >= 0 && target_pt >= 0) {
             // t_cpは03_UPDATE_LANE_ATTRIB.vflのlane_changed時にRoad Line側の
             // cross_pos(prim)から既に確定済み（M6b）。ここでは追跡中の相手車からは読まない。
+
+            // 直進車の情報を取得
             float o_vel   = point(0, "vel", target_pt);
             float o_accel = point(0, "accel", target_pt);
             float o_dist  = distance(t_cp, point(0, "P", target_pt));
 
-            // TTC(t_other)は等速前提(d/v)ではなく、相手の現在の加速度も使った
-            // 等加速度運動の式で解く: d = v0*t + 0.5*a*t^2 → t = (-v0+sqrt(v0^2+2ad))/a
-            // （2根のうちこちらが最初に交錯点へ達する正の解）
+            // TTCは、加速度も考慮に入れる
             float t_other;
             if (abs(o_accel) < 1e-4) {
                 t_other = o_dist / max(o_vel, v_floor);          // a≈0 → 等速の式に退化

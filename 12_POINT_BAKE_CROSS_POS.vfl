@@ -1,0 +1,19 @@
+// 自分のlane_nameをcandidateに持つcross_pointの座標を配列に入れる
+//   直進：1つ / 右折：交錯する直進レーン数ぶん
+// prim側への複製は後段(2/2)で行う。左折は対象外。
+if (s@turn != "straight" && s@turn != "right") return;
+
+// candidateはlane_nameの配列なのでfindattribvalでは引けない
+// → 交錯点を総当たりし、配列にlane_nameが含まれるかをfindで見る
+vector cross_pos[];
+int n1 = npoints(1);
+for (int cp = 0; cp < n1; cp++) {
+    string candidate[] = point(1, "candidate", cp);
+    if (find(candidate, s@lane_name) < 0) continue;
+
+    vector p = point(1, "P", cp);   // 型を明示して受ける（append曖昧回避）
+    append(cross_pos, p);
+}
+if (len(cross_pos) == 0) return; // 対応する交錯点が無いレーン（対象外）
+
+v[]@cross_pos = cross_pos;
