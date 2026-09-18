@@ -9,8 +9,6 @@ i@car_signal   = -1;
 i@car_is_cross = 0;
 
 float same_dot     = 0.5;   // 同レーン先行車のコーン
-float cross_dot    = 0.7;   // 交差/右左折車のコーン
-float cross_half_w = 2.0;   // 自車進路の半幅[m]
 
 int pts[] = nearpoints(0, @P, @search_radius);
 
@@ -29,11 +27,15 @@ foreach(int pt; pts) {
     if (same_lane) {
         if (fwd_dot < same_dot) continue;
     } else {
-        if (fwd_dot < cross_dot) continue;
-        // コーンだけだと遠方で隣レーンを拾うので横オフセットでも絞る
-        float forward = dot(to_other, v@dir);
-        float lateral = length(to_other - forward * v@dir);
-        if (lateral > cross_half_w) continue;
+        // ★ 角度の円錐＋横幅の幾何近似（誤検出/見逃しの原因）をやめ、道路トポロジーで
+        //   確定済みのcross_lines/cross_curves（lane_name配列、03_UPDATE_LANE_ATTRIB.vflで
+        //   lane_changed時にキャッシュ済み）に相手のlane_nameが含まれるかで判定する。
+        //   自分が右折車ならcross_lines、直進車ならcross_curvesの一方だけが値を持つ。
+        string other_lane_name = point(0, "lane_name", pt);
+        int crosses = (find(s[]@cross_lines, other_lane_name) >= 0)
+                   || (find(s[]@cross_curves, other_lane_name) >= 0);
+        if (!crosses) continue;
+        if (fwd_dot < 0.0) continue;   // 自分より後方の相手は無視
         is_cross = 1;
     }
 

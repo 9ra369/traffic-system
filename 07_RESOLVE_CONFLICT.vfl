@@ -5,7 +5,7 @@
 //
 // Input 0: 車両
 // 読む: s@turn, v@dir, v@cross_pos, i@passed（直進車、M1でキャッシュ済み）
-//      i[]@cross_lines, v[]@rt_target_cp（右折車、03_UPDATE_LANE_ATTRIB.vflで
+//      s[]@cross_lines, v[]@rt_target_cp（右折車、03_UPDATE_LANE_ATTRIB.vflで
 //        lane_changed時にキャッシュ済み。rt_target_cpはRoad Line側のcross_pos(prim)
 //        由来で、追跡中の相手車個体には依存しない。M6b）
 // 書く: i@passed, i@passed_frame_count（直進車）
@@ -13,6 +13,16 @@
 //        （右折車、内部状態。cross_linesと同じindexで1本ずつ独立に持つ。M5-1）
 //      i@yield_conflict, f@dist_to_conflict（右折車、全indexを集約した値。M4が読む）
 // ════════════════════════════════════════════════════
+
+// 等加速度運動で距離distに到達するまでの時間（t_other/t_ego共通）。
+// a≈0は等速の式に退化、判別式が負なら手前で止まり到達しない、解が負なら等速へフォールバック。
+float time_to_reach(float dist; float vel; float accel; float v_floor) {
+    if (abs(accel) < 1e-4) return dist / max(vel, v_floor);
+    float disc = vel * vel + 2.0 * accel * dist;
+    if (disc < 0) return 9999.0;
+    float t = (-vel + sqrt(disc)) / accel;
+    return (t <= 0) ? dist / max(vel, v_floor) : t;
+}
 
 //   cross_pos/passedのリセット・再取得は lane_changed の瞬間に行う
 //   （03_UPDATE_LANE_ATTRIB.vfl の lane_changed ブロックに実装済み）。
@@ -37,7 +47,7 @@ if (s@turn == "straight" && i@passed == 0) {
 
 // M2: 右折車(turn=="right")側 — 交錯する直進車の検索・判断
 //   詳細・パラメータの根拠は RESOLVE_CONFLICT/M2_right_turn_search.md 参照。
-//   M5-1: cross_linesが複数のlane_idを持つ場合（1本の右折曲線が複数の直進レーンと
+//   M5-1: cross_linesが複数のlane_nameを持つ場合（1本の右折曲線が複数の直進レーンと
 //   交錯する）に対応するため、判断ラッチ(rt_decided/rt_target_id/rt_target_lock/
 //   rt_target_cp)はcross_linesと同じindexの配列にしてあり、相手レーンごとに完全に
 //   独立してTTCラッチを持つ（追跡中は毎フレーム再評価、ただしyield確定後はgoに
@@ -58,18 +68,17 @@ if (s@turn != "right") {
     i@yield_conflict   = 0;
     f@dist_to_conflict = 9999.0;
 } else {
-    float road_width    = 3.5;
     float search_radius = 36;   // 要チューニング
     float safety_margin = 3.0;                // s（t_other < t_ego + margin でblocking。M6。要チューニング）
     float v_floor        = 1.5;               // m/s
     float vel_stopped    = 0.1;               // m/s（これ未満は停止中とみなす。M6）
-    float stop_margin    = 1.5;               // m（交錯点手前、これを切ったら止まらず抜ける）
+    float stop_margin    = 3.0;               // m（交錯点手前、これを切ったら止まらず抜ける）
 
     // 検知の候補となるポイントを検索
     int cands[] = nearpoints(0, @P, search_radius);   // indexループ全体で使い回す
 
     // ローカル配列にコピー
-    int    lanes[]        = i[]@cross_lines;
+    string lanes[]        = s[]@cross_lines;
     int    in_decided[]     = i[]@rt_decided;
     int    in_target_id[]   = i[]@rt_target_id;
     int    in_target_lock[] = i[]@rt_target_lock;
@@ -85,7 +94,7 @@ if (s@turn != "right") {
     int   n_cross    = len(lanes); // 合計レーン数
 
     for (int idx = 0; idx < n_cross; idx++) {
-        int    opp_lane  = lanes[idx];
+        string opp_lane  = lanes[idx];
         int    t_id      = in_target_id[idx];
         int    t_lock    = in_target_lock[idx];
         vector t_cp      = in_target_cp[idx];
@@ -102,7 +111,7 @@ if (s@turn != "right") {
         foreach (int pt; cands) {
             if (pt == @ptnum) continue; // 自分のポイント
             if (point(0, "passed", pt) == 1) continue; // 通過済みの車
-            if (point(0, "lane_id", pt) != opp_lane) continue; // 自分のlane_idがcorss_lanesになかったら、除外
+            if (point(0, "lane_name", pt) != opp_lane) continue; // 自分のlane_nameがcross_linesになかったら、除外
 
             any_candidate = 1;
             if (point(0, "id", pt) == t_id) { target_seen_this_frame = 1; target_pt = pt; }
@@ -139,19 +148,9 @@ if (s@turn != "right") {
             float o_accel = point(0, "accel", target_pt);
             float o_dist  = distance(t_cp, point(0, "P", target_pt));
 
-            // TTCは、加速度も考慮に入れる
-            float t_other;
-            if (abs(o_accel) < 1e-4) {
-                t_other = o_dist / max(o_vel, v_floor);          // a≈0 → 等速の式に退化
-            } else {
-                float disc = o_vel * o_vel + 2.0 * o_accel * o_dist;
-                if (disc < 0) {
-                    t_other = 9999.0;                             // 減速中で手前に止まる → 到達しない
-                } else {
-                    t_other = (-o_vel + sqrt(disc)) / o_accel;
-                    if (t_other <= 0) t_other = o_dist / max(o_vel, v_floor);   // 保険（等速にフォールバック）
-                }
-            }
+            // TTCは、加速度も考慮に入れる（等加速度運動の到達時間。a≈0/判別式負/解が
+            // 負のケースはそれぞれ等速フォールバック・到達しない・等速フォールバックで処理）
+            float t_other = time_to_reach(o_dist, o_vel, o_accel, v_floor);
 
             // M6: t_ego — 固定TTC閾値(decide_ttc)との比較ではなく、自車が交錯点に
             // 着くまでの時間との相対比較でblockingを決める。交錯点(t_cp)はRoad Line側に
@@ -164,17 +163,7 @@ if (s@turn != "right") {
                 t_ego = sqrt(2.0 * e_dist / max(f@max_accel, 0.01));
             } else {
                 // 走行中：t_otherと同じ式を自車のP/vel/accelで解く
-                if (abs(f@accel) < 1e-4) {
-                    t_ego = e_dist / max(f@vel, v_floor);
-                } else {
-                    float e_disc = f@vel * f@vel + 2.0 * f@accel * e_dist;
-                    if (e_disc < 0) {
-                        t_ego = 9999.0;                              // 減速中で手前に止まる
-                    } else {
-                        t_ego = (-f@vel + sqrt(e_disc)) / f@accel;
-                        if (t_ego <= 0) t_ego = e_dist / max(f@vel, v_floor);   // 保険（等速にフォールバック）
-                    }
-                }
+                t_ego = time_to_reach(e_dist, f@vel, f@accel, v_floor);
             }
 
             t_lock = (t_other < t_ego + safety_margin) ? 1 : 0;

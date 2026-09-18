@@ -1,7 +1,9 @@
 // ════════════════════════════════════════════════════
 // Input 1: Road Line  (src_id, lane_id, dir, curv, turn, next_lanes,
 //                       cross_pos(prim)＝12_BAKE_CROSS_POS.vflで焼き込み済み。M6b/M6c。
-//                       1レーンが複数の交錯点を持ちうるため配列。ここでは先頭要素のみ使用)
+//                       1レーンが複数の交錯点を持ちうるため配列。ここでは先頭要素のみ使用。
+//                       cross_lines(prim、右折レーン)/cross_curves(prim、直進レーン)＝
+//                       中身はlane_nameのstring配列。lane_idには変換せずそのままキャッシュする)
 // ★ M6c: cross_posの取得元をInput 3(歩行者ジオメトリ)からInput 1(Road Line)に統一した
 //   ため、このファイルはもうInput 3を使わない（他ノード=05_HUMAN DETECT等は従来通り
 //   Input 3を使うので、そちら側の配線は変更不要）。
@@ -70,17 +72,28 @@ if (i@lane_changed == 1) {
             }
 
             // ★ M2: 右折レーンのcross_linesをキャッシュ（直進レーンでは既定の空配列のまま）
-            int cross_lines_local[] = {};
+            //   prim属性cross_linesの中身はlane_name配列。lane_idへは変換せず、
+            //   lane_nameのまま照合キーとして統一する（07_RESOLVE_CONFLICT.vflと揃える）。
+            string cross_lines_local[] = {};
             if (len(pr) > 0) {
                 cross_lines_local = prim(1, "cross_lines", pr[0]);
             }
-            i[]@cross_lines = cross_lines_local;
+            s[]@cross_lines = cross_lines_local;
+
+            // ★ 直進レーンのcross_curves（交錯する右折レーンのlane_name配列）も同様にキャッシュする。
+            //   06_CAR DETECT.vflの交差車判定で、自分（直進車）が交錯しうる右折レーンの
+            //   lane_nameかどうかをここで確定した値と照合する（cross_linesと対になる値）。
+            string cross_curves_local[] = {};
+            if (len(pr) > 0) {
+                cross_curves_local = prim(1, "cross_curves", pr[0]);
+            }
+            s[]@cross_curves = cross_curves_local;
 
             // ★ M5-1: cross_linesと同じ長さ・同じindexで判断ラッチ配列を作り直す
             //   （右折区間に入り直すたび、前の交差点の状態を引きずらないようゼロから積む）
             // ★ M6b: rt_target_cpは「今たまたま近くにいる直進車個体が持つcross_pos」を
             //   毎フレーム読みに行くのではなく、cross_lines確定と同時に、Road Line側に
-            //   焼き込み済みのcross_pos(prim)をlane_idキーで直接引いて1回だけ確定する
+            //   焼き込み済みのcross_pos(prim)をlane_nameキーで直接引いて1回だけ確定する
             //   （12_BAKE_CROSS_POS.vfl参照）。交錯点は道路形状だけで決まる値なので、
             //   対応する直進車が今いるかどうかに判断が左右されなくなる。
             int    n_cross = len(cross_lines_local);
@@ -94,8 +107,8 @@ if (i@lane_changed == 1) {
                 append(new_target_lock, 0);
 
                 vector cp_pos = {0, 0, 0};
-                int    opp_lane = cross_lines_local[ci];
-                int    opp_pt   = findattribval(1, "point", "lane_id", opp_lane);
+                string opp_lane = cross_lines_local[ci];
+                int    opp_pt   = findattribval(1, "point", "lane_name", opp_lane);
                 if (opp_pt >= 0) {
                     int opp_pr[] = pointprims(1, opp_pt);
                     if (len(opp_pr) > 0) {
