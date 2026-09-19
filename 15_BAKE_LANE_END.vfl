@@ -1,0 +1,20 @@
+// ── Primitive Wrangle ──
+// Input 0: Road Line
+// 次のレーンを持たない（行き止まりの）レーンに end=1 を立てる。
+// 02_CHANGE ROAD.vflが、このレーンの末端に達した車を削除する判定に使う。
+//
+// next_lanesは11_CONNECT_LANE.vflが入口点にだけ書くため、レーンの全点を走査する
+// （findattribvalで1点だけ引くと、入口点以外を拾って空配列に見えることがある）
+
+int pts[] = primpoints(0, @primnum);
+int has_next = 0;
+
+foreach (int pt; pts) {
+    string nx[] = point(0, "next_lanes", pt);
+    if (len(nx) > 0) {
+        has_next = 1;
+        break;
+    }
+}
+
+i@end = has_next ? 0 : 1;

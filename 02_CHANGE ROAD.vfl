@@ -7,7 +7,13 @@ float d = xyzdist(1, s@lane_name, @P, hitprim, uvw);
 
 if (hitprim >= 0) {          // 見つかったか確認
     @u = uvw.x;
-    if (uvw.x >= 0.99) {
+    if (prim(1, "end", hitprim) == 1) {
+        // 行き止まりレーン(15_BAKE_LANE_END.vflで判定済み)の末端に到達 → 車を削除
+        if (uvw.x >= 0.999) removepoint(0, @ptnum);
+    } else if (uvw.x >= 0.99 && s@next_lane_name != "") {
+        // next_lane_nameが空のまま切り替えると、03のnearpointが解決できず
+        // lane_changedが1で固着し、passed/cross_lines等が前のレーンの値のまま残る。
+        // endが0なのにここで止まる車がいたら、next_lanesの引き当て失敗を疑う
         s@lane_name = s@next_lane_name;
         i@lane_changed = 1;
     }
