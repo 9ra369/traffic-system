@@ -1,21 +1,3 @@
-// ════════════════════════════════════════════════════
-// Input 1: Road Line  (src_id, lane_id, dir, curv, turn, next_lanes,
-//                       cross_pos(prim)＝12_BAKE_CROSS_POS.vflで焼き込み済み。M6b/M6c。
-//                       1レーンが複数の交錯点を持ちうるため配列。ここでは先頭要素のみ使用。
-//                       cross_lines(prim、右折レーン)/cross_curves(prim、直進レーン)＝
-//                       中身はlane_nameのstring配列。lane_idには変換せずそのままキャッシュする)
-// ★ M6c: cross_posの取得元をInput 3(歩行者ジオメトリ)からInput 1(Road Line)に統一した
-//   ため、このファイルはもうInput 3を使わない（他ノード=05_HUMAN DETECT等は従来通り
-//   Input 3を使うので、そちら側の配線は変更不要）。
-// ════════════════════════════════════════════════════
-//
-// ★ レーン追跡の主キーは lane_id（分割・交差点コネクタ生成後の、最終的な1本1本の
-//   スプラインを一意に識別するID）を使う。src_id は分割・交差点処理前の「元の構成
-//   ライン」のIDで、左右分割や複数車線化によって複数の最終レーン（対向車線・並走
-//   車線など）が同じsrc_idを共有しうる。そのままnearpoint/findattribvalのキーに
-//   使うと別レーンの点を誤って拾う恐れがあるため、毎フレーム参照・next_lanes解決とも
-//   lane_id ベースに統一する（旧: src_idベース。2026-09-10変更、旧版はBACKUP/参照）。
-
 // 切り替え直後: 新しい lane_name から lane_id を再解決
 // lane_nameは、末端でnext_lane_nameから値を引き継いでいる
 if (i@lane_changed == 1) {
@@ -24,15 +6,12 @@ if (i@lane_changed == 1) {
         i@lane_id = point(1, "lane_id", pt);
         i@lane_changed = 0;   // 解決できたらオフ
 
-        // ★ この道路の next_lanes を読んで next_lane_name を1回だけ確定
-        //    next_lanes を持つ点(in点)を lane_id で探す
-        //    （src_idだと左右分割・複数車線で複数レーンが同じ値を共有するため、
-        //     別レーンのnext_lanesを誤って拾う恐れがある。lane_idは最終スプライン
-        //     ごとに一意なので、自分の入口点(in点)だけが確実に見つかる）
-        int inpt = findattribval(1, "point", "lane_id", i@lane_id);
+        //lane_idを取得
+        int lane_pt = findattribval(1, "point", "lane_id", i@lane_id);
         // ここで、このレーンの持つ、次のレーンの候補を取得し、次のレーンを決定
-        if (inpt >= 0) {
-            string nexts[] = point(1, "next_lanes", inpt);
+        if (lane_pt >= 0) {
+            // 次に進むべきレーンを決定
+            string nexts[] = point(1, "next_lanes", lane_pt);
             int n = len(nexts);
             if (n == 1) {
                 s@next_lane_name = nexts[0];
@@ -45,87 +24,50 @@ if (i@lane_changed == 1) {
                 s@next_lane_name = "";   // 候補なし(行き止まり等)
             }
 
-            // ★ M1: 新しいレーンの交錯点情報を作り直す（直進車のみ使う）
+            // 新しいレーンの交錯点情報を作り直す（直進車のみ使う）
             i@passed             = 0;
             i@passed_frame_count = 0;
             v@cross_pos          = {0, 0, 0};
 
-            // 今のprim（lane_name一致＋現在地に最も近い点なので、今まさに乗っているprim
-            // ＝コネクタなら曲線側を確実に指す）。cross_pos/cross_lines共通で使う。
-            int pr[] = pointprims(1, pt);
 
-            // ★ M6c: 交錯点はRoad Line側に焼き込み済みのcross_pos(prim)を直接読む
-            //   （12_BAKE_CROSS_POS.vfl参照）。旧: Input 3(歩行者ジオメトリ)の"cross"
-            //   グループ点へのnearpoint。右折車側(M6b)と取得元を揃え、Input 3への
-            //   依存とnearpoint検索を無くした。
-            //   ★ s@turnでは絞らない：この時点のs@turnはまだ前のレーンの値のまま
-            //   （更新は本ファイル末尾の毎フレームブロックで、このif全体より後）。
-            //   右折レーンのprimはcross_pos未設定＝既定値{0,0,0}が返るだけなので、
-            //   絞らなくても実害はない（v@cross_posは直進車以外どこからも読まれない）。
-            //   ★ 12_BAKE_CROSS_POSでcross_pos(prim)が配列化（1レーンが複数の交錯点を
-            //   持ちうる）されたため、ここでは先頭要素だけを使う（複数対応は未実装）。
+            // 今まさに乗っているprim
+            int pr[] = pointprims(1, pt);
+            string cross_lines_local[]    = {};
+            string cross_curves_local[]   = {};
+            vector cross_line_pos_local[] = {};
             if (len(pr) > 0) {
-                vector cp_candidates[] = prim(1, "cross_pos", pr[0]);
+                int prim0 = pr[0];
+
+                // 交錯点情報を取得
+                vector cp_candidates[] = prim(1, "cross_pos", prim0);
                 if (len(cp_candidates) > 0) {
                     v@cross_pos = cp_candidates[0];
                 }
-            }
 
-            // ★ M2: 右折レーンのcross_linesをキャッシュ（直進レーンでは既定の空配列のまま）
-            //   prim属性cross_linesの中身はlane_name配列。lane_idへは変換せず、
-            //   lane_nameのまま照合キーとして統一する（07_RESOLVE_CONFLICT.vflと揃える）。
-            string cross_lines_local[] = {};
-            if (len(pr) > 0) {
-                cross_lines_local = prim(1, "cross_lines", pr[0]);
+                // 交錯ライン/右折カーブ情報を取得
+                cross_lines_local  = prim(1, "cross_lines",  prim0);
+                cross_curves_local = prim(1, "cross_curves", prim0);
+                // 相手(直進)レーン側の交錯点座標。cross_linesと同indexで
+                // 13_BAKE_CROSS_LINES.vflがベイク済み
+                cross_line_pos_local = prim(1, "cross_line_pos", prim0);
             }
-            s[]@cross_lines = cross_lines_local;
-
-            // ★ 直進レーンのcross_curves（交錯する右折レーンのlane_name配列）も同様にキャッシュする。
-            //   06_CAR DETECT.vflの交差車判定で、自分（直進車）が交錯しうる右折レーンの
-            //   lane_nameかどうかをここで確定した値と照合する（cross_linesと対になる値）。
-            string cross_curves_local[] = {};
-            if (len(pr) > 0) {
-                cross_curves_local = prim(1, "cross_curves", pr[0]);
-            }
+            s[]@cross_lines  = cross_lines_local;
             s[]@cross_curves = cross_curves_local;
 
-            // ★ M5-1: cross_linesと同じ長さ・同じindexで判断ラッチ配列を作り直す
-            //   （右折区間に入り直すたび、前の交差点の状態を引きずらないようゼロから積む）
-            // ★ M6b: rt_target_cpは「今たまたま近くにいる直進車個体が持つcross_pos」を
-            //   毎フレーム読みに行くのではなく、cross_lines確定と同時に、Road Line側に
-            //   焼き込み済みのcross_pos(prim)をlane_nameキーで直接引いて1回だけ確定する
-            //   （12_BAKE_CROSS_POS.vfl参照）。交錯点は道路形状だけで決まる値なので、
-            //   対応する直進車が今いるかどうかに判断が左右されなくなる。
-            int    n_cross = len(cross_lines_local);
-            int    new_decided[]     = {};
-            int    new_target_id[]   = {};
-            int    new_target_lock[] = {};
-            vector new_target_cp[]   = {};
-            for (int ci = 0; ci < n_cross; ci++) {
+            // cross_linesと同indexの判断ラッチ配列をゼロから積み直す
+            int n_cross = len(cross_lines_local); // 交錯する数
+            int new_decided[]     = {};
+            int new_target_id[]   = {};
+            int new_target_lock[] = {};
+            for (int cross_idx = 0; cross_idx < n_cross; cross_idx++) {
                 append(new_decided,     0);
                 append(new_target_id,   -1);
                 append(new_target_lock, 0);
-
-                vector cp_pos = {0, 0, 0};
-                string opp_lane = cross_lines_local[ci];
-                int    opp_pt   = findattribval(1, "point", "lane_name", opp_lane);
-                if (opp_pt >= 0) {
-                    int opp_pr[] = pointprims(1, opp_pt);
-                    if (len(opp_pr) > 0) {
-                        // ★ cross_pos(prim)は配列化済み（1レーンが複数の交錯点を持ちうる）。
-                        //   先頭要素を使う（複数対応は未実装）。
-                        vector opp_cp_candidates[] = prim(1, "cross_pos", opp_pr[0]);
-                        if (len(opp_cp_candidates) > 0) {
-                            cp_pos = opp_cp_candidates[0];
-                        }
-                    }
-                }
-                append(new_target_cp, cp_pos);
             }
             i[]@rt_decided     = new_decided;
             i[]@rt_target_id   = new_target_id;
             i[]@rt_target_lock = new_target_lock;
-            v[]@rt_target_cp   = new_target_cp;
+            v[]@rt_target_cp   = cross_line_pos_local;
         }
     }
 }

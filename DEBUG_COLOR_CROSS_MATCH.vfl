@@ -1,0 +1,56 @@
+// ════════════════════════════════════════════════════
+// DEBUG_COLOR_CROSS_MATCH: Solverの外側（Solverノードの直後）に置くデバッグ専用ノード。
+// 右折車が実際に検知・追跡している直進車(rt_target_id、07_RESOLVE_CONFLICTが
+// M5-1で毎フレーム更新している内部状態そのもの)を、ペアごとにランダムだが
+// 同一の色で塗って可視化する。同じ色の2台が画面上に並んでいれば、その右折車が
+// その直進車をちゃんと検知（追跡）できていることが目視で確認できる。
+// シミュレーション本体のロジックには一切影響しない。
+//
+// ★ Run Over は必ず "Detail (Only Run Once)" にすること
+//   （自分以外の点のCdをsetpointattribで書き換えるため、Point単位で並列に
+//   走らせると別indexからの書き込みと競合する）
+//
+// Input 0: 車両（Solverの出力）
+// 読む: i@car, s@turn, i@id, i[]@rt_target_id（cross_linesと同じindexで持つ、
+//      追跡中の相手直進車のid。まだ何も検知していないindexは-1）
+// 書く: v@Cd（検知されていない車は灰色、検知ペアはランダムな同色）
+// ════════════════════════════════════════════════════
+
+// Run Overが誤って"Points"のままでも1回しか実行されないようにするガード。
+// Detail実行時は@ptnumが-1になるため、このreturnには引っかからない。
+if (@ptnum > 0) return;
+
+int n = npoints(0);
+
+// 1) まず全車を灰色にリセットする（検知されていない車はここで確定）
+for (int pt = 0; pt < n; pt++) {
+    setpointattrib(0, "Cd", pt, {0.5, 0.5, 0.5}, "set");
+}
+
+// 2) 右折車のrt_target_idを見て、実際に追跡中の直進車とペアで塗る
+for (int pt = 0; pt < n; pt++) {
+    if (point(0, "car", pt) != 1) continue;
+    if (point(0, "turn", pt) != "right") continue;
+
+    int target_ids[] = point(0, "rt_target_id", pt);
+
+    foreach (int t_id; target_ids) {
+        if (t_id < 0) continue; // このindexはまだ何も検知していない
+
+        // t_idを持つ点をidから逆引き（線形探索。車両数が多い場合は要最適化）
+        int target_pt = -1;
+        for (int q = 0; q < n; q++) {
+            if (point(0, "car", q) != 1) continue;
+            if (point(0, "id", q) == t_id) { target_pt = q; break; }
+        }
+        if (target_pt < 0) continue; // 追跡中のidがもう画面上にいない（通過して消えた等）
+
+        // ペア固有のシードから鮮やかな色を作る（同じペアなら毎フレーム同じ色になる）
+        int self_id = point(0, "id", pt);
+        int seed    = min(self_id, t_id) * 100000 + max(self_id, t_id);
+        vector col  = hsvtorgb(random(seed), 0.85, 1.0);
+
+        setpointattrib(0, "Cd", pt,        col, "set");
+        setpointattrib(0, "Cd", target_pt, col, "set");
+    }
+}

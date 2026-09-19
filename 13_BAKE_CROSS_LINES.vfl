@@ -1,0 +1,21 @@
+// ── Primitive Wrangle ──
+// Input 0: 曲線（コネクタ）ジオメトリ ← ここに書き込む
+// Input 1: Intersection Analysis の出力ポイント
+// Input 2: 直線ジオメトリ
+
+string lanes[];
+vector cps[];
+
+for (int i = 0; i < npoints(1); i++) {
+    int sp[] = point(1, "sourceprim", i);
+    if (len(sp) < 2) continue;
+    if (sp[1] != @primnum) continue;        // この曲線の交点だけ
+
+    string lane = prim(2, "lane_name", sp[0]);
+    if (find(lanes, lane) >= 0) continue;   // 同じ相手レーンは1回だけ
+    append(lanes, lane);
+    append(cps,   point(1, "P", i));        // cross_linesと同indexの交錯点座標
+}
+
+s[]@cross_lines    = lanes;
+v[]@cross_line_pos = cps;

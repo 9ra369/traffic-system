@@ -33,9 +33,9 @@ if (s@turn == "straight" && i@passed == 0) {
     float  d = dot(normalize(v@dir), normalize(to_cross));
 
     if (d <= 0) {
-        // 交錯点はもう後方 → 通過。15フレーム連続で確認できたら確定する
+        // 交錯点はもう後方 → 通過。48フレーム連続で確認できたら確定する
         i@passed_frame_count += 1;
-        if (i@passed_frame_count >= 15) {
+        if (i@passed_frame_count >= 48) {
             i@passed             = 1;
             i@passed_frame_count = 0;   // 確定したのでカウントは掃除しておく
         }

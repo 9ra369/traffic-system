@@ -58,7 +58,7 @@ if (s@turn != "right") {
 } else {
     float road_width    = 3.5;
     float search_radius = 36;   // 要チューニング
-    float safety_margin = 1.0;                // s（t_other < t_ego + margin でblocking。M6。要チューニング）
+    float safety_margin = 3.0;                // s（t_other < t_ego + margin でblocking。M6。要チューニング）
     float v_floor        = 1.5;               // m/s
     float vel_stopped    = 0.1;               // m/s（これ未満は停止中とみなす。M6）
     float stop_margin    = 1.5;               // m（交錯点手前、これを切ったら止まらず抜ける）
@@ -154,7 +154,6 @@ if (s@turn != "right") {
             // 着くまでの時間との相対比較でblockingを決める。交錯点(t_cp)はRoad Line側に
             // 焼き込み済みの値（M6b）で、両者に共通の同じ世界座標点。
             // 詳細・積み残し → RESOLVE_CONFLICT/M6_t_ego.md
-        
             float e_dist = distance(t_cp, @P);
             float t_ego;
             if (i@car_state >= 1 && f@vel < vel_stopped) {

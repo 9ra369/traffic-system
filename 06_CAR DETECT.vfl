@@ -8,7 +8,7 @@ f@car_vel      = 0.0;
 i@car_signal   = -1;
 i@car_is_cross = 0;
 
-float same_dot     = 0.5;   // 同レーン先行車のコーン
+float same_dot     = 0.6;   // 同レーン先行車のコーン
 
 int pts[] = nearpoints(0, @P, @search_radius);
 
@@ -25,17 +25,24 @@ foreach(int pt; pts) {
     int is_cross  = 0;
 
     if (same_lane) {
-        if (fwd_dot < same_dot) continue;
+        if (fwd_dot < same_dot) continue; //前方の車だけを処理
     } else {
         // ★ 角度の円錐＋横幅の幾何近似（誤検出/見逃しの原因）をやめ、道路トポロジーで
-        //   確定済みのcross_lines/cross_curves（lane_name配列、03_UPDATE_LANE_ATTRIB.vflで
-        //   lane_changed時にキャッシュ済み）に相手のlane_nameが含まれるかで判定する。
-        //   自分が右折車ならcross_lines、直進車ならcross_curvesの一方だけが値を持つ。
-        string other_lane_name = point(0, "lane_name", pt);
-        int crosses = (find(s[]@cross_lines, other_lane_name) >= 0)
-                   || (find(s[]@cross_curves, other_lane_name) >= 0);
-        if (!crosses) continue;
+        //   確定済みのcross_curves（lane_name配列、03_UPDATE_LANE_ATTRIB.vflでlane_changed
+        //   時にキャッシュ済み）に相手のlane_nameが含まれるかで判定する。
+        //   ★ cross_linesは見ない：右折車→直進車の交錯は07_RESOLVE_CONFLICT(M2)が
+        //   TTC込みで専任しているので、ここでも拾うとdist_to_car/yield_conflictの
+        //   二重管理になる（M3の役割分担：直進車→右折車の検知だけをここが担当）。
+        //   右折車のcross_curvesは常に空配列なので、この判定は右折車には一切ヒットしない。
+
+        //
         if (fwd_dot < 0.0) continue;   // 自分より後方の相手は無視
+        string other_lane_name = point(0, "lane_name", pt);
+        if (find(s[]@cross_curves, other_lane_name) < 0) continue;
+        // ★ 相手（右折車）が既にyield確定済みなら、自分に道を譲って止まってくれる
+        //   ので前方車として扱わない（この判定は06→07の実行順により1フレーム遅れる。
+        //   実用上は無視できる程度のはず）。
+        if (point(0, "yield_conflict", pt) == 1) continue;
         is_cross = 1;
     }
 

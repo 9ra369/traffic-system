@@ -1,0 +1,40 @@
+// ── Primitive Wrangle ──
+// Input 0: 直線 / Input 1: 交点 / Input 2: 曲線
+float tol = 0.01;
+
+int    curve_prims[];   // Input2でのprim index（ソート用の一時保持。最終的にはlane_nameへ変換する）
+float  us[];
+vector cps[];           // 交錯点座標（curve_primsと同index）
+
+for (int i = 0; i < npoints(1); i++) {
+
+    // 交錯点から、交錯しているラインのprimnnumをまず取得
+    int sp[] = point(1, "sourceprim", i);
+    if (len(sp) < 2 || sp[0] != @primnum) continue;
+
+    vector p = point(1, "P", i);
+
+    int cpts[] = primpoints(2, sp[1]);
+    if (distance(p, point(2, "P", cpts[0])) < tol) continue;
+    if (distance(p, point(2, "P", cpts[len(cpts) - 1])) < tol) continue;
+
+    if (find(curve_prims, sp[1]) >= 0) continue;
+
+    vector uv[] = point(1, "sourceprimuv", i);
+    append(curve_prims, sp[1]);
+    append(us,          uv[0].x);
+    append(cps,         p);
+}
+
+int order[] = argsort(us);
+string sorted_curves[];
+vector sorted_cps[];
+foreach (int idx; order) {
+    // ★ 生のprim indexではなく、lane_nameに変換して格納する（cross_linesと揃える）
+    string cname = prim(2, "lane_name", curve_prims[idx]);
+    append(sorted_curves, cname);
+    append(sorted_cps,    cps[idx]);   // cross_curvesと同indexの交錯点座標
+}
+
+s[]@cross_curves    = sorted_curves;
+v[]@cross_curve_pos = sorted_cps;
