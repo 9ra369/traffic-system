@@ -69,6 +69,8 @@ if (s@turn != "right") {
     f[]@dbg_ttc_margin = {};
     f[]@dbg_t_other    = {};
     f[]@dbg_t_ego      = {};
+    f[]@dbg_ego_fwd    = {};
+    f[]@dbg_dcp        = {};
     i@yield_conflict   = 0;
     f@dist_to_conflict = 9999.0;
 
@@ -78,9 +80,9 @@ if (s@turn != "right") {
     float safety_margin = 4;               // s（t_other < t_ego + margin でblocking。M6。要チューニング）
     float v_floor        = 1;               // m/s
     float vel_stopped    = 0.1;               // m/s（これ未満は停止中とみなす。M6）
-    float stop_margin    = 3.0;               // m（交錯点手前、これを切ったら止まらず抜ける）
+    float stop_margin    = 0.5;               // m（交錯点上に居座らないための最小距離。08のstop_offset=1より小さくすること）
     int   clear_frames   = 24;                // 脅威なしが何フレーム続いたらyieldを解除するか
-    float ego_fwd_min    = 0.1;               // 交錯点が自分の前方にあると見なす内積の下限
+    float ego_ahead_min  = 0.0;               // m（進行方向への射影がこれ未満なら交錯点を通過したとみなす）
 
     // 検知の候補となるポイントを検索
     int cands[] = nearpoints(0, @P, search_radius);   // indexループ全体で使い回す
@@ -103,6 +105,8 @@ if (s@turn != "right") {
     float  out_dbg_margin[]  = {};
     float  out_dbg_t_other[] = {};
     float  out_dbg_t_ego[]   = {};
+    float  out_dbg_ego_fwd[] = {};
+    float  out_dbg_dcp[]     = {};
 
     int   any_yield  = 0;
     float best_dist  = 9999.0;
@@ -126,12 +130,20 @@ if (s@turn != "right") {
         float dbg_margin  = -9999.0;   // t_ego + safety_margin - t_other（正ならblocking）
         float dbg_t_other = -9999.0;   // 相手が交錯点に着くまでの時間
         float dbg_t_ego   = -9999.0;   // 自分が交錯点に着くまでの時間
+        float dbg_ego_fwd = -9999.0;   // 自分のdirと「自分→交錯点」の内積
+        float dbg_dcp     = -9999.0;   // 自分から交錯点までの距離
 
         // 候補の直進車探し
         foreach (int pt; cands) {
             if (pt == @ptnum) continue; // 自分のポイント
             if (point(0, "car", pt) != 1) continue;    // 車以外の点
-            if (point(0, "lane_name", pt) != opp_lane) continue; // 自分のlane_nameがcross_linesになかったら、除外
+            // ★ cross_linesには曲線が実際に交差している1本のprimしか入らない。
+            //   レーンは分割されているので、その手前のprimにいる後続車も拾わないと
+            //   「もう対向車はいない」と誤判断してgoに倒れる。
+            //   next_lane_nameはその車が選んだ行き先なので、別レーンへ逸れる車は
+            //   一致せず除外される（むしろ正確）
+            if (point(0, "lane_name",      pt) != opp_lane
+             && point(0, "next_lane_name", pt) != opp_lane) continue;
 
             // このindexの交錯点(t_cp)を相手が既に通過していたら候補から外す。
             // i@passedは48フレームの確認待ちがある上に交錯点1つ分しか見ていないため、
@@ -221,11 +233,26 @@ if (s@turn != "right") {
             float  dCp   = length(to_cp);
 
             // ★ distance()は符号なしなので、交錯点を通過して離れるとまたdCpが大きくなり
-            //   yieldに戻ってしまう。自分の進行方向との内積で前方かどうかを見る
-            float ego_fwd = (dCp > 1e-4) ? dot(normalize(v@dir), to_cp / dCp) : 1.0;
+            //   yieldに戻ってしまう。進行方向への符号付き射影で前後を判定する。
+            //   ★ 正規化した内積は使わない：交錯点に近づくほど横方向のズレに敏感になり、
+            //   車が曲線をショートカットして外へ膨らむ分だけで角度が跳ね上がって、
+            //   通過していないのに通過扱いになっていた。射影なら横ズレの影響を受けない
+            float ego_ahead = dot(normalize(v@dir), to_cp);   // m（正なら前方）
+            dbg_ego_fwd = ego_ahead;
+            dbg_dcp     = dCp;
 
-            if (dCp < stop_margin || ego_fwd < ego_fwd_min) {
-                t_decided = 2;   // 手前まで来すぎた or もう通過した → 止まらず抜ける
+            // ★ 「止まり切れないなら抜ける」の判定を距離の固定値ではなく物理で行う。
+            //   旧実装はdCp < 3.0固定だったが、08_STATEは交錯点の1m手前で止まろうとする
+            //   (stop_offset=1)ため、停止位置に着く前に必ず3mを切ってyieldが解除され、
+            //   右折車が譲らずに突っ込んでいた。
+            //   ★ 判定するのは巡航中(car_state==0)だけ。減速を始めた後は08が実行可能な
+            //   required_decelを算出済みなので、07が判断し直すと
+            //   「減速→止まれないと誤判定→go→加速→ますます止まれない」の片道ループに陥る
+            float stop_dist  = (f@vel * f@vel) / (2.0 * max(f@max_decel, 0.01));
+            int   cannot_stop = (i@car_state == 0) && (stop_dist > dCp);
+
+            if (cannot_stop || dCp < stop_margin || ego_ahead < ego_ahead_min) {
+                t_decided = 2;   // 止まり切れない or 交錯点上 or もう通過した → 抜ける
             } else {
                 any_yield = 1;
                 best_dist = min(best_dist, dCp);
@@ -240,6 +267,8 @@ if (s@turn != "right") {
         append(out_dbg_margin,  dbg_margin);
         append(out_dbg_t_other, dbg_t_other);
         append(out_dbg_t_ego,   dbg_t_ego);
+        append(out_dbg_ego_fwd, dbg_ego_fwd);
+        append(out_dbg_dcp,     dbg_dcp);
     }
 
     i[]@rt_decided     = out_decided;
@@ -251,6 +280,8 @@ if (s@turn != "right") {
     f[]@dbg_ttc_margin = out_dbg_margin;
     f[]@dbg_t_other    = out_dbg_t_other;
     f[]@dbg_t_ego      = out_dbg_t_ego;
+    f[]@dbg_ego_fwd    = out_dbg_ego_fwd;
+    f[]@dbg_dcp        = out_dbg_dcp;
 
     // ── 集約：どれか1つでもyield中なら止まる。距離は一番近いものを使う ──
     i@yield_conflict   = any_yield;

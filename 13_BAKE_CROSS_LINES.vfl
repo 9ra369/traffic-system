@@ -3,18 +3,31 @@
 // Input 1: Intersection Analysis の出力ポイント
 // Input 2: 直線ジオメトリ
 
+float tol = 0.01;
+
 string lanes[];
 vector cps[];
+
+int    mypts[]  = primpoints(0, @primnum);   // この曲線自身の点（端点判定用）
+vector p_start  = point(0, "P", mypts[0]);
+vector p_end    = point(0, "P", mypts[len(mypts) - 1]);
 
 for (int i = 0; i < npoints(1); i++) {
     int sp[] = point(1, "sourceprim", i);
     if (len(sp) < 2) continue;
     if (sp[1] != @primnum) continue;        // この曲線の交点だけ
 
+    // ★ 曲線の端点は「直線に接続しているだけ」で交錯ではない。14_BAKE_CROSS_CURVESと
+    //   同じ除外を入れて対称にする。これが無いと接続点が交錯として混ざり、しかも
+    //   dedupeがlane_name単位なので、同じレーンの本当の交錯点を押しのけてしまう
+    vector p = point(1, "P", i);
+    if (distance(p, p_start) < tol) continue;
+    if (distance(p, p_end)   < tol) continue;
+
     string lane = prim(2, "lane_name", sp[0]);
     if (find(lanes, lane) >= 0) continue;   // 同じ相手レーンは1回だけ
     append(lanes, lane);
-    append(cps,   point(1, "P", i));        // cross_linesと同indexの交錯点座標
+    append(cps,   p);                       // cross_linesと同indexの交錯点座標
 }
 
 s[]@cross_lines    = lanes;
