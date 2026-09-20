@@ -1,0 +1,130 @@
+// ════════════════════════════════════════════════════
+// VIZ_DEPENDENCY: Solverの外側（Solverノードの直後）に置く可視化専用ノード。
+// 各車から「今その車の行動を決めている対象」へ山なりの弧を1本張る。
+// 誰が何を見て減速・停止しているかの依存関係をビューポートで追うためのもの。
+//
+// ★ 点とprimを追加するので、絶対にSolverの中には置かないこと。
+//   車の点数が変わってシミュレーション本体が壊れる。
+// ★ 011_COLORIZEより後に置くこと（@Cdを引き継ぐため）。
+//
+// 入力はSolver内の各ノードと同じ並びにする:
+//   Input 0: 車両（Solverの出力）
+//   Input 2: 信号機（04_SIGNAL DETECTのInput 2と同じもの）
+//   Input 3: 歩行者（05_HUMAN DETECTのInput 3と同じもの）
+//
+// 作るもの: 弧のpolyline + 中央の矢印poly（どちらもグループ "decel_lines"）
+//   i@decel_src (prim) … 0=先行車 / 1=交差車 / 2=右折で譲っている直進車 / 3=信号 / 4=歩行者
+//   f@decel_dist(prim) … その要因までの距離
+//   @Cd (point) …… 始点側の車の色を引き継ぐ
+// ════════════════════════════════════════════════════
+
+int   nseg       = 12;     // 弧の分割数
+float h_ratio    = 0.2;    // 高さ = 距離 * この比率（距離10 → 高さ2）
+float arrow_size = 1.0;    // 中央に置く矢印の大きさ
+
+// aからbへ山なりの弧を張り、中央にa→b方向の矢印を置く
+void add_arc(vector a; vector b; vector col; int nseg; float h_ratio; float arrow_size; int src) {
+    float d = distance(a, b);
+    if (d < 1e-3) return;
+
+    float h = d * h_ratio;
+
+    int pr = addprim(0, "polyline");
+    setprimattrib(0, "decel_src",  pr, src);
+    setprimattrib(0, "decel_dist", pr, d);
+    setprimgroup(0, "decel_lines", pr, 1);
+
+    for (int i = 0; i <= nseg; i++) {
+        float  t = float(i) / float(nseg);
+        vector p = lerp(a, b, t);
+        p.y += sin(t * M_PI) * h;   // 両端0・中央が最大の山なり
+        int pt = addpoint(0, p);
+        setpointattrib(0, "Cd", pt, col);
+        addvertex(0, pr, pt);
+    }
+
+    // ── 中央(t=0.5)にa→b方向を向いた三角形を置く ──
+    // この位置は弧の接線が水平なので、三角形も水平に寝かせて上から読めるようにする
+    vector apex = lerp(a, b, 0.5);
+    apex.y += h;                       // sin(0.5 * M_PI) = 1
+
+    vector up   = {0, 1, 0};
+    vector fwd  = normalize(b - a);
+    vector side = normalize(cross(fwd, up));
+
+    float  half  = arrow_size * 0.5;
+    vector tip   = apex + fwd * half;
+    vector barbL = apex - fwd * half + side * half;
+    vector barbR = apex - fwd * half - side * half;
+
+    int ar = addprim(0, "poly");
+    setprimattrib(0, "decel_src",  ar, src);
+    setprimattrib(0, "decel_dist", ar, d);
+    setprimgroup(0, "decel_lines", ar, 1);
+
+    vector corners[] = array(tip, barbL, barbR);
+    foreach (vector c; corners) {
+        int pt = addpoint(0, c);
+        setpointattrib(0, "Cd", pt, col);
+        addvertex(0, ar, pt);
+    }
+}
+
+if (i@car != 1) return;
+
+vector my_cd = v@Cd;   // 011_COLORIZEが設定した自分の色
+
+// ── 行動要因を1つに決める ──
+// 08_STATEはctrl_srcに「停止対象として勝ったもの」を入れている。
+// ctrl_srcが立っていなければ、前車がいる場合はIDMで追従中ということ。
+// ★ 参照先が解決できないまま描くと原点へ線が伸びるので、各分岐で存在を確認してから
+//   found=1にする（point()は範囲外や未配線の入力に対して{0,0,0}を黙って返す）
+vector target = {0, 0, 0};
+int    src    = -1;
+int    found  = 0;
+
+if (i@ctrl_src == 0) {
+    // 赤/黄信号で止まろうとしている
+    if (i@signal_ptnum >= 0 && i@signal_ptnum < npoints(2)) {
+        target = point(2, "P", i@signal_ptnum);
+        src    = 3;
+        found  = 1;
+    }
+
+} else if (i@ctrl_src == 2) {
+    // 横断中の歩行者で止まろうとしている
+    if (i@ped_ptnum >= 0 && i@ped_ptnum < npoints(3)) {
+        target = point(3, "P", i@ped_ptnum);
+        src    = 4;
+        found  = 1;
+    }
+
+} else if (i@ctrl_src == 3) {
+    // 右折コンフリクト。yield中のindexが追跡している直進車のうち最も近いものへ張る。
+    // （交錯点rt_target_cpは未ベイク時に{0,0,0}になりうるので参照先には使わない）
+    int   decided[] = i[]@rt_decided;
+    int   tids[]    = i[]@rt_target_id;
+    float best      = 1e9;
+
+    for (int k = 0; k < len(decided); k++) {
+        if (decided[k] != 1) continue;      // このindexはyieldしていない
+        if (k >= len(tids) || tids[k] < 0) continue;   // 追跡中の相手なし
+
+        int opp = findattribval(0, "point", "id", tids[k]);
+        if (opp < 0) continue;
+
+        vector opp_p = point(0, "P", opp);
+        float  dk    = distance(opp_p, @P);
+        if (dk < best) { best = dk; target = opp_p; src = 2; found = 1; }
+    }
+
+} else if (i@car_ptnum >= 0 && i@car_ptnum < npoints(0)) {
+    // 停止対象より前車が近い（08は早期returnしてIDMに任せている）
+    target = point(0, "P", i@car_ptnum);
+    src    = i@car_is_cross == 1 ? 1 : 0;
+    found  = 1;
+}
+
+if (found) {
+    add_arc(@P, target, my_cd, nseg, h_ratio, arrow_size, src);
+}

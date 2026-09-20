@@ -21,27 +21,32 @@ foreach(int pt; pts) {
     if (d < 1e-4) continue;
     float fwd_dot = dot(to_other / d, v@dir);
 
-    int same_lane = (point(0, "lane_name", pt) == s@lane_name);
+    string other_lane_name = point(0, "lane_name", pt);
+    // 交差点に入った前車はコネクタ＝行き先レーンのlane_nameに変わる一方、後続車は
+    // 手前まで来ないと切り替わらない。next_lane_nameも同一レーン扱いにしないと、
+    // 交差点で止まっている前車を見失う
+    int same_lane = (other_lane_name == s@lane_name)
+                 || (other_lane_name == s@next_lane_name);
     int is_cross  = 0;
 
     if (same_lane) {
         if (fwd_dot < same_dot) continue; //前方の車だけを処理
     } else {
-        // ★ 角度の円錐＋横幅の幾何近似（誤検出/見逃しの原因）をやめ、道路トポロジーで
-        //   確定済みのcross_curves（lane_name配列、03_UPDATE_LANE_ATTRIB.vflでlane_changed
-        //   時にキャッシュ済み）に相手のlane_nameが含まれるかで判定する。
-        //   ★ cross_linesは見ない：右折車→直進車の交錯は07_RESOLVE_CONFLICT(M2)が
-        //   TTC込みで専任しているので、ここでも拾うとdist_to_car/yield_conflictの
-        //   二重管理になる（M3の役割分担：直進車→右折車の検知だけをここが担当）。
-        //   右折車のcross_curvesは常に空配列なので、この判定は右折車には一切ヒットしない。
-
-        //
         if (fwd_dot < 0.0) continue;   // 自分より後方の相手は無視
-        string other_lane_name = point(0, "lane_name", pt);
-        if (find(s[]@cross_curves, other_lane_name) < 0) continue;
+        // 右折車のみしか、cross_curvesは持たないから、直進車しかここでは処理されない
+        int cross_idx = find(s[]@cross_curves, other_lane_name);
+        if (cross_idx < 0) continue;
+
+        // ★ この相手との交錯点を自分が既に通過していたら無視する。
+        //   fwd_dot >= 0 は180度の半空間なので、真横にいる右折車まで拾ってしまう。
+        //   交錯点座標はcross_curvesと同indexで14_BAKE_CROSS_CURVES.vflがベイク済み
+        vector cross_ps[] = v[]@cross_curve_pos;
+        if (cross_idx < len(cross_ps)) {
+            vector to_cp  = cross_ps[cross_idx] - @P;
+            float  len_cp = length(to_cp);
+            if (len_cp > 1e-4 && dot(normalize(v@dir), to_cp / len_cp) <= 0) continue;
+        }
         // ★ 相手（右折車）が既にyield確定済みなら、自分に道を譲って止まってくれる
-        //   ので前方車として扱わない（この判定は06→07の実行順により1フレーム遅れる。
-        //   実用上は無視できる程度のはず）。
         if (point(0, "yield_conflict", pt) == 1) continue;
         is_cross = 1;
     }
@@ -57,7 +62,8 @@ foreach(int pt; pts) {
         f@car_vel = is_cross
                   ? max(v_other * dot(dir_other, v@dir), 0.0)
                   : v_other;
-
+                  
+        // 前方の車の状態に合わせる
         int front_state = point(0, "car_state", pt);
         i@car_signal = (front_state == 1 || front_state == 2) ? 1 : 0;
     }

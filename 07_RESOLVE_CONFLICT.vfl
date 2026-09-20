@@ -64,30 +64,45 @@ if (s@turn != "right") {
     i[]@rt_decided     = {};
     i[]@rt_target_id   = {};
     i[]@rt_target_lock = {};
+    i[]@rt_clear_count = {};
     v[]@rt_target_cp   = {};
+    f[]@dbg_ttc_margin = {};
+    f[]@dbg_t_other    = {};
+    f[]@dbg_t_ego      = {};
     i@yield_conflict   = 0;
     f@dist_to_conflict = 9999.0;
+
+// 以下の処理は、右折車のみに適用
 } else {
-    float search_radius = 36;   // 要チューニング
-    float safety_margin = 3.0;                // s（t_other < t_ego + margin でblocking。M6。要チューニング）
-    float v_floor        = 1.5;               // m/s
+    float search_radius = 40;   // 要チューニング
+    float safety_margin = 4;               // s（t_other < t_ego + margin でblocking。M6。要チューニング）
+    float v_floor        = 1;               // m/s
     float vel_stopped    = 0.1;               // m/s（これ未満は停止中とみなす。M6）
     float stop_margin    = 3.0;               // m（交錯点手前、これを切ったら止まらず抜ける）
+    int   clear_frames   = 24;                // 脅威なしが何フレーム続いたらyieldを解除するか
+    float ego_fwd_min    = 0.1;               // 交錯点が自分の前方にあると見なす内積の下限
 
     // 検知の候補となるポイントを検索
     int cands[] = nearpoints(0, @P, search_radius);   // indexループ全体で使い回す
+    i[]@cands = cands;   // デバッグ用：検索半径内のptnum一覧
 
     // ローカル配列にコピー
     string lanes[]        = s[]@cross_lines;
     int    in_decided[]     = i[]@rt_decided;
     int    in_target_id[]   = i[]@rt_target_id;
     int    in_target_lock[] = i[]@rt_target_lock;
+    int    in_clear_count[] = i[]@rt_clear_count;
     vector in_target_cp[]   = v[]@rt_target_cp;
 
     int    out_decided[]     = {};
     int    out_target_id[]   = {};
     int    out_target_lock[] = {};
+    int    out_clear_count[] = {};
     vector out_target_cp[]   = {};
+    // デバッグ用
+    float  out_dbg_margin[]  = {};
+    float  out_dbg_t_other[] = {};
+    float  out_dbg_t_ego[]   = {};
 
     int   any_yield  = 0;
     float best_dist  = 9999.0;
@@ -97,6 +112,7 @@ if (s@turn != "right") {
         string opp_lane  = lanes[idx];
         int    t_id      = in_target_id[idx];
         int    t_lock    = in_target_lock[idx];
+        int    t_clear   = in_clear_count[idx];
         vector t_cp      = in_target_cp[idx];
         int    t_decided = in_decided[idx];
 
@@ -106,12 +122,26 @@ if (s@turn != "right") {
         int   target_pt              = -1;   // ★ 追跡中の相手(t_id)そのもののpt。毎フレームのTTC再評価に使う
         int   nearest_pt            = -1;
         float nearest_d             = 9999.0;
+        // デバッグ用：TTCを評価しなかったindexは-9999のまま
+        float dbg_margin  = -9999.0;   // t_ego + safety_margin - t_other（正ならblocking）
+        float dbg_t_other = -9999.0;   // 相手が交錯点に着くまでの時間
+        float dbg_t_ego   = -9999.0;   // 自分が交錯点に着くまでの時間
 
         // 候補の直進車探し
         foreach (int pt; cands) {
             if (pt == @ptnum) continue; // 自分のポイント
-            if (point(0, "passed", pt) == 1) continue; // 通過済みの車
+            if (point(0, "car", pt) != 1) continue;    // 車以外の点
             if (point(0, "lane_name", pt) != opp_lane) continue; // 自分のlane_nameがcross_linesになかったら、除外
+
+            // このindexの交錯点(t_cp)を相手が既に通過していたら候補から外す。
+            // i@passedは48フレームの確認待ちがある上に交錯点1つ分しか見ていないため、
+            // ここではindex固有のt_cpとの前後関係を毎フレーム直接判定する
+            vector opp_p   = point(0, "P",   pt);   // 型を明示して受ける（dotの多重定義回避）
+            vector opp_dir = point(0, "dir", pt);
+            vector to_cp   = t_cp - opp_p;
+            float  len_cp  = length(to_cp);
+            if (len_cp > 1e-4
+                && dot(normalize(opp_dir), to_cp / len_cp) <= 0) continue;
 
             any_candidate = 1;
             if (point(0, "id", pt) == t_id) { target_seen_this_frame = 1; target_pt = pt; }
@@ -132,11 +162,7 @@ if (s@turn != "right") {
             target_pt = nearest_pt;
         }
 
-        // ★ 追跡中は毎フレームTTCを再評価する（以前は初めて捕捉した瞬間の1回だけだった
-        //   ため、最初に遅い/遠い状態でgo判定が固定されると、その後相手が加速して
-        //   本当に危険になっても気づけなかった）。t_decidedはyield→goに自動で戻さない
-        //   ので、ここでt_lockが0↔1を行き来してもblockingの一方通行(go→yield昇格)は
-        //   崩れず、「進んでは止まる」の往復は起きない。
+        // ★ 追跡中は毎フレームTTCを再評価する
 
 
         if (t_id >= 0 && target_pt >= 0) {
@@ -148,14 +174,9 @@ if (s@turn != "right") {
             float o_accel = point(0, "accel", target_pt);
             float o_dist  = distance(t_cp, point(0, "P", target_pt));
 
-            // TTCは、加速度も考慮に入れる（等加速度運動の到達時間。a≈0/判別式負/解が
-            // 負のケースはそれぞれ等速フォールバック・到達しない・等速フォールバックで処理）
+            // TTCは、加速度も考慮に入れる
             float t_other = time_to_reach(o_dist, o_vel, o_accel, v_floor);
 
-            // M6: t_ego — 固定TTC閾値(decide_ttc)との比較ではなく、自車が交錯点に
-            // 着くまでの時間との相対比較でblockingを決める。交錯点(t_cp)はRoad Line側に
-            // 焼き込み済みの値（M6b）で、両者に共通の同じ世界座標点。
-            // 詳細・積み残し → RESOLVE_CONFLICT/M6_t_ego.md
             float e_dist = distance(t_cp, @P);
             float t_ego;
             if (i@car_state >= 1 && f@vel < vel_stopped) {
@@ -167,6 +188,9 @@ if (s@turn != "right") {
             }
 
             t_lock = (t_other < t_ego + safety_margin) ? 1 : 0;
+            dbg_margin  = t_ego + safety_margin - t_other;
+            dbg_t_other = t_other;
+            dbg_t_ego   = t_ego;
         }
 
         int has_seen = (t_id >= 0);
@@ -174,19 +198,34 @@ if (s@turn != "right") {
 
         // ── 判断ラッチ（このindex単独） ──
         if (!any_candidate) {
-            t_decided = 0;                                     // 周囲に対象車が本当にいない → none
-        } else if (t_decided == 0 && has_seen) {
-            t_decided = blocked ? 1 : 2;                        // 初回確定 yield:1 / go:2
-        } else if (t_decided == 2 && blocked) {
-            t_decided = 1;                                      // 本当に新しく見えた相手がblockingなら即昇格
+            // 脅威が消えても即座には発進しない。clear_framesフレーム連続で
+            // 候補なしを確認してから解除する（交錯点の境界でのフリッカー防止）
+            t_clear += 1;
+            if (t_clear >= clear_frames) t_decided = 0;         // 対象車がいない → none
+        } else {
+            t_clear = 0;
+            if (t_decided == 0 && has_seen) {
+                t_decided = blocked ? 1 : 2;                    // 初回確定 yield:1 / go:2
+            } else if (t_decided == 2 && blocked) {
+                t_decided = 1;                                  // 本当に新しく見えた相手がblockingなら即昇格
+            }
+            // yieldはここでは自動でgoに戻さない（安全側は自動で緩めない）
         }
-        // yieldはここでは自動でgoに戻さない（安全側は自動で緩めない）
 
         // ── 交錯点で居座らない：止まり切れず手前まで来てしまったら通過へ切替 ──
-        if (t_decided == 1 && t_id >= 0) {
-            float dCp = distance(t_cp, @P);
-            if (dCp < stop_margin) {
-                t_decided = 2;
+        // ★ t_id >= 0 は条件にしない。候補が消えた直後もt_decidedが1の間はyieldを
+        //   維持しないと、clear_framesのデバウンスが素通りしてしまう。
+        //   t_cpは相手車に依存しない固定値なので、相手がいなくても評価できる
+        if (t_decided == 1) {
+            vector to_cp = t_cp - @P;
+            float  dCp   = length(to_cp);
+
+            // ★ distance()は符号なしなので、交錯点を通過して離れるとまたdCpが大きくなり
+            //   yieldに戻ってしまう。自分の進行方向との内積で前方かどうかを見る
+            float ego_fwd = (dCp > 1e-4) ? dot(normalize(v@dir), to_cp / dCp) : 1.0;
+
+            if (dCp < stop_margin || ego_fwd < ego_fwd_min) {
+                t_decided = 2;   // 手前まで来すぎた or もう通過した → 止まらず抜ける
             } else {
                 any_yield = 1;
                 best_dist = min(best_dist, dCp);
@@ -196,24 +235,24 @@ if (s@turn != "right") {
         append(out_decided,     t_decided);
         append(out_target_id,   t_id);
         append(out_target_lock, t_lock);
+        append(out_clear_count, t_clear);
         append(out_target_cp,   t_cp);
+        append(out_dbg_margin,  dbg_margin);
+        append(out_dbg_t_other, dbg_t_other);
+        append(out_dbg_t_ego,   dbg_t_ego);
     }
 
     i[]@rt_decided     = out_decided;
     i[]@rt_target_id   = out_target_id;
     i[]@rt_target_lock = out_target_lock;
+    i[]@rt_clear_count = out_clear_count;
     v[]@rt_target_cp   = out_target_cp;
+
+    f[]@dbg_ttc_margin = out_dbg_margin;
+    f[]@dbg_t_other    = out_dbg_t_other;
+    f[]@dbg_t_ego      = out_dbg_t_ego;
 
     // ── 集約：どれか1つでもyield中なら止まる。距離は一番近いものを使う ──
     i@yield_conflict   = any_yield;
     f@dist_to_conflict = any_yield ? best_dist : 9999.0;
 }
-
-// M3: 直進車側の右折車検知は不要と判断（検討の記録は RESOLVE_CONFLICT/M3_straight_car_guard.md）。
-//   06_CAR DETECT.vfl の is_cross 判定が代わりに機能する。
-
-// M4: 08_STATE への統合 — 実装済み。
-//   ここで書いた i@yield_conflict / f@dist_to_conflict を 08_STATE.vfl が読み、
-//   赤信号・歩行者と同列の「止まって待つ」対象として f@dist_to_target と比較する
-//   （ctrl_src=3）。減速度は専用式を持たず、既存の required_decel 式にそのまま乗せる。
-//   詳細 → RESOLVE_CONFLICT/M4_state_integration.md

@@ -29,12 +29,12 @@ if (i@lane_changed == 1) {
             i@passed_frame_count = 0;
             v@cross_pos          = {0, 0, 0};
 
-
             // 今まさに乗っているprim
             int pr[] = pointprims(1, pt);
-            string cross_lines_local[]    = {};
-            string cross_curves_local[]   = {};
-            vector cross_line_pos_local[] = {};
+            string cross_lines_local[]     = {};
+            string cross_curves_local[]    = {};
+            vector cross_line_pos_local[]  = {};
+            vector cross_curve_pos_local[] = {};
             if (len(pr) > 0) {
                 int prim0 = pr[0];
 
@@ -50,38 +50,39 @@ if (i@lane_changed == 1) {
                 // 相手(直進)レーン側の交錯点座標。cross_linesと同indexで
                 // 13_BAKE_CROSS_LINES.vflがベイク済み
                 cross_line_pos_local = prim(1, "cross_line_pos", prim0);
+                // 自分(直進レーン)側の交錯点座標。cross_curvesと同indexで
+                // 14_BAKE_CROSS_CURVES.vflがベイク済み。06の交差車判定で使う
+                cross_curve_pos_local = prim(1, "cross_curve_pos", prim0);
             }
-            s[]@cross_lines  = cross_lines_local;
-            s[]@cross_curves = cross_curves_local;
+            s[]@cross_lines     = cross_lines_local;
+            s[]@cross_curves    = cross_curves_local;
+            v[]@cross_curve_pos = cross_curve_pos_local;
 
             // cross_linesと同indexの判断ラッチ配列をゼロから積み直す
             int n_cross = len(cross_lines_local); // 交錯する数
             int new_decided[]     = {};
             int new_target_id[]   = {};
             int new_target_lock[] = {};
+            int new_clear_count[] = {};
             for (int cross_idx = 0; cross_idx < n_cross; cross_idx++) {
                 append(new_decided,     0);
                 append(new_target_id,   -1);
                 append(new_target_lock, 0);
+                append(new_clear_count, 0);
             }
             i[]@rt_decided     = new_decided;
             i[]@rt_target_id   = new_target_id;
             i[]@rt_target_lock = new_target_lock;
+            i[]@rt_clear_count = new_clear_count;
             v[]@rt_target_cp   = cross_line_pos_local;
         }
     }
 }
 
 // 毎フレーム: 今のレーン(lane_id)上の最寄り点から dir/curv/turn を読み直す。
-// ★ lane_id < 0（未解決）でもnearpointは単に見つからずpt=-1を返すだけなので、
-//   「lane_id >= 0のときだけ」というガードは無くても安全（内側のif (pt>=0)が
-//   両ケースとも同じフォールバックになる）。
 int pt = nearpoint(1, "@lane_id=" + itoa(i@lane_id), @P);
 if (pt >= 0) {
     v@dir  = point(1, "dir",  pt);
     f@curv = point(1, "curv", pt);
-    s@turn = point(1, "turn", pt);   // ★ コネクタ上でなければ既定値("")のまま＝直進扱い
+    s@turn = point(1, "turn", pt); 
 }
-// pt < 0 のとき（lane_id未解決、または一致点が見つからない）は前フレームのdir/curv/turnを維持する
-// ★ lane_idはlane_changed時に一度確定した「今のレーン」の主キーなので、src_idの
-//   ときとは違い、ここで毎フレーム読み直す（上書きする）ことはしない。

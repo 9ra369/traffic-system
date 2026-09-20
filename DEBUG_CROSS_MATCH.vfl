@@ -27,7 +27,7 @@ i@dbg_nearest_pt         = -1;
 
 if (s@turn != "right") return;
 
-float search_radius = 36;   // 07_RESOLVE_CONFLICT.vflと同じ値に揃えること
+float search_radius = 40;   // 07_RESOLVE_CONFLICT.vflと同じ値に揃えること
 
 string lanes[] = s[]@cross_lines;
 
