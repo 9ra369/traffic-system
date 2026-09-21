@@ -12,6 +12,7 @@ i@car = 1;
 i@car_state     = 0;    // 0=CRUISING  1=BRAKING  2=STOPPED
 i@yellow_commit = 0;    // 0=通常停止判断  1=黄色通過コミット済み
 i@lane_end_count = 0;   // 行き先が無いまま末端に張り付いたフレーム数（02が加算、24で削除）
+i@cp_baked      = 1;    // 0=cross_line_posが焼けていない（03が判定、07がgo_reason=4で表に出す）
 
 // ── 信号情報（SIGNAL DETECTが毎フレーム上書き） ────────
 i@signal_ptnum   = -1;

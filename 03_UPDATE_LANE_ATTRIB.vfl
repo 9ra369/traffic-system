@@ -74,6 +74,12 @@ if (i@lane_changed == 1) {
                     }
                 }
             }
+            // ★ ベイク漏れを黙って通さない。cross_linesがあるのにcross_line_posが無い/
+            //   本数が合わないなら13_BAKE_CROSS_LINESの焼き直し漏れ（属性が無いと
+            //   prim()は空配列を返すだけでエラーは出ない）
+            i@cp_baked = (len(cross_lines_local) == 0)
+                      || (len(cross_line_pos_local) == len(cross_lines_local));
+
             string prev_lines[] = s[]@cross_lines;   // 上書き前に退避（ラッチ引き継ぎ判定用）
             s[]@cross_lines     = cross_lines_local;
             s[]@cross_curves    = cross_curves_local;

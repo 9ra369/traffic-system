@@ -279,7 +279,9 @@ if (s@turn != "right" && i@rt_lookahead != 1) {
         //   進行方向への符号付き射影で前後を判定する。ただし交錯点が真横にあると
         //   0付近をまたぐので、通過判定側(passed_cp)で余裕を取っている
         float ego_ahead = dot(normalize(v@dir), ego_to_cp);   // m（正なら前方）
-        int   cp_valid  = (dCp > 1e-4);                   // t_cpが{0,0,0}＝未ベイク
+        // t_cpが{0,0,0}でも自車が原点から離れていればdCpは大きい。座標だけでは
+        // 未ベイクを検出できないので、03が立てたcp_bakedと併せて見る
+        int   cp_valid  = (dCp > 1e-4) && (i@cp_baked == 1);
         if (cp_valid) {
             dbg_ego_fwd = ego_ahead;
             dbg_dcp     = dCp;
@@ -319,7 +321,8 @@ if (s@turn != "right" && i@rt_lookahead != 1) {
                 best_dist = min(best_dist, dCp);
             }
         } else if (t_decided == 0) {
-            go_reason = 0;
+            // 未ベイクは候補が全滅してt_decidedが1にならないため、判断に入る前でも表に出す
+            go_reason = cp_valid ? 0 : 4;
         }
 
         append(out_decided,     t_decided);
