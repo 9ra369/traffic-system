@@ -157,6 +157,7 @@ if (s@turn != "right" && i@rt_lookahead != 1) {
         //   相手（min t_other）で代表させる。
         //   blocked = OR(t_other_i < t_ego + margin) は min(t_other) の1回の比較と等価
         int   any_candidate = 0;
+        int   idx_sigstop   = 0;        // このindexで「信号で止まる」として外した相手の数
         float min_t_other   = 9999.0;   // 最も早く交錯点に着く相手の到達時間
         // デバッグ用：TTCを評価しなかったindexは-9999のまま
         float dbg_margin  = -9999.0;   // t_ego + safety_margin - t_other（正ならblocking）
@@ -223,7 +224,9 @@ if (s@turn != "right" && i@rt_lookahead != 1) {
             float o_dist = distance(t_cp, opp_p);
             if (point(0, "car_state", pt) != 0
              && point(0, "ctrl_src",  pt) == 0
-             && point(0, "dist_to_signal", pt) < o_dist) { dbg_n_sigstop += 1; continue; }
+             && point(0, "dist_to_signal", pt) < o_dist) {
+                idx_sigstop += 1; dbg_n_sigstop += 1; continue;
+            }
 
             any_candidate = 1;
             dbg_n_alive  += 1;
@@ -255,7 +258,9 @@ if (s@turn != "right" && i@rt_lookahead != 1) {
         if (!any_candidate) {
             // 脅威が消えても即座には発進しない。clear_framesフレーム連続で
             // 候補なしを確認してから解除する（交錯点の境界でのフリッカー防止）
-            t_clear += 1;
+            // ★ ただし消えた理由が「全員信号で止まる」ならフェーズの終わりなのでデバウンスしない。
+            //   信号が変わるまでに交差点を抜けさせる
+            t_clear = (idx_sigstop > 0) ? clear_frames : t_clear + 1;
             if (t_clear >= clear_frames) t_decided = 0;         // 対象車がいない → none
         } else {
             t_clear = 0;
