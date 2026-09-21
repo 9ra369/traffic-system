@@ -101,6 +101,7 @@ if (s@turn != "right" && i@rt_lookahead != 1) {
     float ego_ahead_min  = 0.0;               // m（進行方向への射影がこれ未満なら交錯点を通過したとみなす）
     float emerg_decel_ratio = 3.0;            // 「止まり切れるか」判定に使う制動力のmax_decel倍率
     float opp_clear      = 5.0;               // m（相手が交錯点を何m過ぎたら候補から外すか。要チューニング）
+    float opp_fwd_min    = 0.0;               // 相手が自分のどこから前なら候補にするか（dirへの内積。右折中はdirが回るので0より上げない）
 
     // 検知の候補となるポイントを検索
     int cands[] = nearpoints(0, @P, search_radius);   // indexループ全体で使い回す
@@ -199,9 +200,10 @@ if (s@turn != "right" && i@rt_lookahead != 1) {
             //   一致せず除外される（むしろ正確）
             if (point(0, "lane_name",      pt) != opp_lane
              && point(0, "next_lane_name", pt) != opp_lane) continue;
-            // ★ 相手も右折コネクタに乗っているなら、交錯点を渡らずに曲がっていく。
-            //   s@turnは03が毎フレーム現在のレーンから読み直すので、コネクタ上でだけ"right"
-            if (point(0, "turn", pt) == "right") continue;
+            // ★ 相手も右折なら、交錯点を渡らずに曲がっていく。
+            //   turnはコネクタに乗ってから、rt_lookaheadはその手前のレーンから立つ
+            if (point(0, "turn", pt) == "right"
+             || point(0, "rt_lookahead", pt) == 1) continue;
             dbg_n_lane += 1;
 
             // このindexの交錯点(t_cp)を相手が既に通過していたら候補から外す。
@@ -212,6 +214,9 @@ if (s@turn != "right" && i@rt_lookahead != 1) {
             vector opp_p   = point(0, "P",   pt);   // 型を明示して受ける（dotの多重定義回避）
             vector opp_dir = point(0, "dir", pt);
             if (dot(normalize(opp_dir), t_cp - opp_p) < -opp_clear) continue;
+
+            // ★ 自分より後ろにいる相手とは交錯しない。交錯点未通過の対向車はdirが90度回った後も前方に残る
+            if (dot(normalize(v@dir), normalize(opp_p - @P)) <= opp_fwd_min) continue;
 
             // ★ 信号の停止線が交錯点より手前なら、その相手は交錯点まで来ない。
             //   ctrl_src==0は08が「最も近い停止目標＝信号」と決めた車（黄の通過コミット中は car_state==0）
