@@ -13,12 +13,24 @@ i@dbg_follow       = -1;
 f@dbg_nearest_stop = 9999.0;   // dist_to_carと比較している停止対象までの距離
 f@dbg_stop_need    = 0.0;      // その停止対象に対して、今から止まるのに要る距離
 
+// ── 急に現れた歩行者で止まり切れないなら、通過する（07の交錯点と同じ考え方） ──
+// 横断帯の上で急停止する方が危険で、歩行者が自車レーンに達するまでには時間がある。
+// ★ 判定は巡航中(car_state==0)だけ。減速開始後に切り替えると加減速を往復する
+int ped_pass = 0;
+if (i@ped_crossing == 1 && i@car_state == 0) {
+    float ped_offset  = 2.0;                   // 下のstop_offset(ctrl_src==2)と揃える
+    float brake_decel = f@max_decel * 3.0;     // 緊急制動。07のemerg_decel_ratioと同値
+    float stop_dist   = (f@vel * f@vel) / (2.0 * max(brake_decel, 0.01));
+    ped_pass = (stop_dist > f@dist_to_ped - ped_offset);
+}
+i@dbg_ped_pass = ped_pass;   // デバッグ用：通過を選んだら1
+
 // 前車がいる場合、信号・歩行者・コンフリクトより遠ければIDMに任せる
 if (i@car_ptnum >= 0) {
     float nearest_stop = 9999.0;
     if ((i@signal_state == 1 || i@signal_state == 2))
         nearest_stop = min(nearest_stop, f@dist_to_signal);
-    if (i@ped_crossing == 1)
+    if (i@ped_crossing == 1 && !ped_pass)
         nearest_stop = min(nearest_stop, f@dist_to_ped);
     if (i@yield_conflict == 1)
         nearest_stop = min(nearest_stop, f@dist_to_conflict);
@@ -61,7 +73,7 @@ if ((i@signal_state == 1 || i@signal_state == 2)
     ctrl_state = i@signal_state;
     i@ctrl_src = 0;
 }
-if (i@ped_crossing == 1 && f@dist_to_ped < f@dist_to_target) {
+if (i@ped_crossing == 1 && !ped_pass && f@dist_to_ped < f@dist_to_target) {
     f@dist_to_target = f@dist_to_ped;
     ctrl_state = 2;
     i@ctrl_src = 2;
