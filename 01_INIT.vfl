@@ -35,10 +35,12 @@ v@cross_pos          = {0, 0, 0};
 
 // ── 右折コンフリクト判断（右折車のみ。RESOLVE_CONFLICTが毎フレーム更新、
 i[]@rt_decided     = {};   // 各indexごと 0=none 1=yield 2=go
-i[]@rt_target_id   = {};   // 各indexごと、判断を保持中の相手車（@id）。いなければ-1
-i[]@rt_target_lock = {};   // ↑を捕捉した瞬間に確定したblocking判定（以後保持）
+i[]@rt_target_id   = {};   // 各indexごと、最も早く交錯点に来る相手車（@id）。いなければ-1
+i[]@rt_target_lock = {};   // ↑に対するblocking判定。どちらも毎フレーム作り直す表示用
 i[]@rt_clear_count = {};   // 各indexごと、脅威なしが何フレーム連続したか（yield解除のデバウンス）
 v[]@rt_target_cp   = {};
+i@rt_lookahead     = 0;    // 1=次に乗るコネクタが右折（手前のレーンから判断を始める）
+i@rt_boost         = 0;    // yield解除後、残り何フレーム09が加速を上乗せするか
 i@yield_conflict   = 0;    // 集約値：いずれかのindexがyield中なら1
 f@dist_to_conflict = 9999.0;  // 集約値：yield中のindexのうち最も近い交錯点までの距離
 

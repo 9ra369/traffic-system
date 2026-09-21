@@ -35,6 +35,7 @@ if (i@lane_changed == 1) {
             string cross_curves_local[]    = {};
             vector cross_line_pos_local[]  = {};
             vector cross_curve_pos_local[] = {};
+            i@rt_lookahead = 0;
             if (len(pr) > 0) {
                 int prim0 = pr[0];
 
@@ -53,28 +54,61 @@ if (i@lane_changed == 1) {
                 // 自分(直進レーン)側の交錯点座標。cross_curvesと同indexで
                 // 14_BAKE_CROSS_CURVES.vflがベイク済み。06の交差車判定で使う
                 cross_curve_pos_local = prim(1, "cross_curve_pos", prim0);
+
+                // ── 右折の先読み ──────────────────────────────
+                // 交錯情報はコネクタprimにしか無いため、乗ってから判断すると交錯点まで
+                // 数mしかなく物理的に止まれない。コネクタの点は行き先レーンのlane_nameを
+                // 持つので、上と同じ引き方をnext_lane_nameに対して行えば先に読める
+                // （CHANGES/2026-09-20_右折yieldがgoに倒れる問題.md）
+                if (s@next_lane_name != "") {
+                    int npt   = nearpoint(1, "@lane_name=" + s@next_lane_name, @P);
+                    int npr[] = {};
+                    if (npt >= 0) npr = pointprims(1, npt);
+                    if (len(npr) > 0) {
+                        int    conn      = npr[0];
+                        string conn_turn = prim(1, "turn", conn);   // 型を明示して受ける
+                        if (conn_turn == "right") {
+                            cross_lines_local    = prim(1, "cross_lines",    conn);
+                            cross_line_pos_local = prim(1, "cross_line_pos", conn);
+                            i@rt_lookahead       = 1;
+                        }
+                    }
+                }
             }
+            string prev_lines[] = s[]@cross_lines;   // 上書き前に退避（ラッチ引き継ぎ判定用）
             s[]@cross_lines     = cross_lines_local;
             s[]@cross_curves    = cross_curves_local;
             v[]@cross_curve_pos = cross_curve_pos_local;
 
-            // cross_linesと同indexの判断ラッチ配列をゼロから積み直す
+            // cross_linesと同indexの判断ラッチ配列。先読みで既に同じ交錯レーン一式を
+            // 持っているなら引き継ぐ。積み直すとコネクタに乗った瞬間に判断が0に戻り、
+            // 交差点の中で譲り直しになってしまう
             int n_cross = len(cross_lines_local); // 交錯する数
-            int new_decided[]     = {};
-            int new_target_id[]   = {};
-            int new_target_lock[] = {};
-            int new_clear_count[] = {};
-            for (int cross_idx = 0; cross_idx < n_cross; cross_idx++) {
-                append(new_decided,     0);
-                append(new_target_id,   -1);
-                append(new_target_lock, 0);
-                append(new_clear_count, 0);
+            int same_cross = (len(prev_lines) == n_cross);
+            for (int k = 0; same_cross && k < n_cross; k++) {
+                if (prev_lines[k] != cross_lines_local[k]) same_cross = 0;
             }
-            i[]@rt_decided     = new_decided;
-            i[]@rt_target_id   = new_target_id;
-            i[]@rt_target_lock = new_target_lock;
-            i[]@rt_clear_count = new_clear_count;
-            v[]@rt_target_cp   = cross_line_pos_local;
+            if (!(same_cross && n_cross > 0)) {
+                int new_decided[]     = {};
+                int new_target_id[]   = {};
+                int new_target_lock[] = {};
+                int new_clear_count[] = {};
+                for (int cross_idx = 0; cross_idx < n_cross; cross_idx++) {
+                    append(new_decided,     0);
+                    append(new_target_id,   -1);
+                    append(new_target_lock, 0);
+                    append(new_clear_count, 0);
+                }
+                i[]@rt_decided     = new_decided;
+                i[]@rt_target_id   = new_target_id;
+                i[]@rt_target_lock = new_target_lock;
+                i[]@rt_clear_count = new_clear_count;
+                // ★ t_cpもラッチを積み直すときだけ入れ替える。同じ交錯レーンなら
+                //   同じ交錯点のはずで、毎回代入すると先読み中に使っていた値が
+                //   コネクタに乗った瞬間に別のprim由来の値へ黙って飛ぶことがある
+                //   （ego_aheadが急に負へ跳ねてgo_reason=3で譲りが外れる）
+                v[]@rt_target_cp   = cross_line_pos_local;
+            }
         }
     }
 }

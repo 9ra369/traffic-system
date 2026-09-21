@@ -1,6 +1,15 @@
 f@dist_to_target = 9999.0;
 int ctrl_state = 0;
 i@ctrl_src     = -1;
+// デバッグ用：前車に追従(IDM)するか自分で判断するかを、どの条件で決めたか
+//  -1 前車がいない（i@car_ptnum < 0）
+//   0 前車を見捨てて自分で判断（follow_ok=0。後続右折車で期待する値）
+//   1 follow_okだが停止対象の方が近い → 自分で判断
+//   2 yield_conflict==0 なので前車に追従
+//   3 前車が減速/停止中（car_signal==1）なので前車に追従
+//   4 前車の実速度が leader_slow 未満なので前車に追従
+i@dbg_follow       = -1;
+f@dbg_nearest_stop = 9999.0;   // dist_to_carと比較している停止対象までの距離
 
 // 前車がいる場合、信号・歩行者・コンフリクトより遠ければIDMに任せる
 if (i@car_ptnum >= 0) {
@@ -12,14 +21,29 @@ if (i@car_ptnum >= 0) {
     if (i@yield_conflict == 1)
         nearest_stop = min(nearest_stop, f@dist_to_conflict);
 
-    if (f@dist_to_car <= nearest_stop) {
+    // ★ yield中は「前車の方が近い」だけでIDMに預けてはいけない。交錯点は前車より
+    //   遠いのが普通なので、先行右折車が先に抜けると後続車は譲る判断を持ったまま
+    //   追走して突っ込む。前車が減速/停止しているときだけ前車を実質の停止線とみなす
+    float leader_slow = 1.0;   // m/s
+    int   follow_ok   = 1;
+    int   follow_why  = 0;
+    if      (i@yield_conflict == 0)    follow_why = 2;
+    else if (i@car_signal == 1)        follow_why = 3;
+    else if (f@car_vel < leader_slow)  follow_why = 4;
+    else                               follow_ok  = 0;
+
+    f@dbg_nearest_stop = nearest_stop;
+
+    if (follow_ok && f@dist_to_car <= nearest_stop) {
         // 前車の方が近い → IDMに任せる
+        i@dbg_follow    = follow_why;
         i@car_state     = 0;
         i@yellow_commit = 0;
         i@yellow_judged = 0;
         return;
     }
-    // 信号・歩行者・コンフリクトの方が近い → 以降の判定に進む
+    i@dbg_follow = follow_ok ? 1 : 0;
+    // 信号・歩行者・コンフリクトの方が近い（or 抜けていく前車） → 以降の判定に進む
 }
 
 if ((i@signal_state == 1 || i@signal_state == 2)

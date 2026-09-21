@@ -1,0 +1,65 @@
+// ════════════════════════════════════════════════════
+// VIZ_CROSS_POINT: 各右折車が持つ交錯点(v[]@rt_target_cp)をその場に描く。
+// 「交錯点が本当に対向レーンとの交点にあるか」を目で確かめるためのもの。
+//
+// ★ 点とprimを追加するので、絶対にSolverの中には置かないこと（21_VIZ_DEPENDENCYと同じ）。
+//
+// Input 0: 車両（Solverの出力）
+//
+// 作るもの: 交錯点の垂直ティック + 車から交錯点への線（グループ "cross_points"）
+//   i@cp_idx     (prim) … cross_linesの何番目か
+//   i@cp_decided (prim) … その時点のrt_decided 0=none 1=yield 2=go
+//   f@cp_ahead   (prim) … dirへの射影（負なら後方。go_reason=3の根拠になる値）
+//   f@cp_lat     (prim) … 横方向の距離。cp_aheadの絶対値がこれを超えると「通過」判定
+// ════════════════════════════════════════════════════
+
+float tick_h = 3.0;   // 交錯点に立てる縦線の高さ
+
+if (i@car != 1) return;
+
+vector cps[]     = v[]@rt_target_cp;
+int    decided[] = i[]@rt_decided;
+if (len(cps) == 0) return;
+
+vector fwd = normalize(v@dir);
+
+for (int k = 0; k < len(cps); k++) {
+    vector cp = cps[k];
+    if (length(cp) < 1e-4) continue;   // 未ベイク({0,0,0})は描かない
+
+    vector to_cp = cp - @P;
+    float  ahead = dot(fwd, to_cp);
+    float  lat   = length(to_cp - ahead * fwd);
+    int    dec   = (k < len(decided)) ? decided[k] : -1;
+
+    // yield=赤 / go=緑 / none=灰
+    vector col = (dec == 1) ? set(1.0, 0.2, 0.2)
+               : (dec == 2) ? set(0.2, 1.0, 0.3)
+               :              set(0.4, 0.4, 0.4);
+
+    // ── 交錯点に立てる縦線 ──
+    int tick = addprim(0, "polyline");
+    setprimattrib(0, "cp_idx",     tick, k);
+    setprimattrib(0, "cp_decided", tick, dec);
+    setprimattrib(0, "cp_ahead",   tick, ahead);
+    setprimattrib(0, "cp_lat",     tick, lat);
+    setprimgroup(0, "cross_points", tick, 1);
+    foreach (vector p; array(cp, cp + set(0, tick_h, 0))) {
+        int pt = addpoint(0, p);
+        setpointattrib(0, "Cd", pt, col);
+        addvertex(0, tick, pt);
+    }
+
+    // ── 車から交錯点への線。交錯点が真横にあるかを角度で読む ──
+    int link = addprim(0, "polyline");
+    setprimattrib(0, "cp_idx",     link, k);
+    setprimattrib(0, "cp_decided", link, dec);
+    setprimattrib(0, "cp_ahead",   link, ahead);
+    setprimattrib(0, "cp_lat",     link, lat);
+    setprimgroup(0, "cross_points", link, 1);
+    foreach (vector p; array(@P, cp)) {
+        int pt = addpoint(0, p);
+        setpointattrib(0, "Cd", pt, col);
+        addvertex(0, link, pt);
+    }
+}

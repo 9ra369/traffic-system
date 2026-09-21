@@ -9,14 +9,16 @@ i@car_signal   = -1;
 i@car_is_cross = 0;
 
 float same_dot     = 0.6;   // 同レーン先行車のコーン
+float cross_dot    = 0.1;   // 交差車のコーン（真横よりわずかに前を要求する）
 
-int pts[] = nearpoints(0, @P, @search_radius);
+int pts[] = nearpoints(0, @P, @search_radius*1.1);
 
 foreach(int pt; pts) {
     if (pt == @ptnum) continue;
     if (point(0, "car", pt) != 1) continue;
 
-    vector to_other = point(0, "P", pt) - @P;
+    vector opp_p    = point(0, "P", pt);   // 型を明示して受ける（多重定義回避）
+    vector to_other = opp_p - @P;
     float  d = length(to_other);
     if (d < 1e-4) continue;
     float fwd_dot = dot(to_other / d, v@dir);
@@ -32,7 +34,7 @@ foreach(int pt; pts) {
     if (same_lane) {
         if (fwd_dot < same_dot) continue; //前方の車だけを処理
     } else {
-        if (fwd_dot < 0.0) continue;   // 自分より後方の相手は無視
+        if (fwd_dot < cross_dot) continue;   // 自分より後方・真横の相手は無視
         // 右折車のみしか、cross_curvesは持たないから、直進車しかここでは処理されない
         int cross_idx = find(s[]@cross_curves, other_lane_name);
         if (cross_idx < 0) continue;
@@ -42,9 +44,15 @@ foreach(int pt; pts) {
         //   交錯点座標はcross_curvesと同indexで14_BAKE_CROSS_CURVES.vflがベイク済み
         vector cross_ps[] = v[]@cross_curve_pos;
         if (cross_idx < len(cross_ps)) {
-            vector to_cp  = cross_ps[cross_idx] - @P;
+            vector cp     = cross_ps[cross_idx];
+            vector to_cp  = cp - @P;
             float  len_cp = length(to_cp);
             if (len_cp > 1e-4 && dot(normalize(v@dir), to_cp / len_cp) <= 0) continue;
+
+            // ★ 信号の停止線が交錯点より手前なら、その相手は交錯点まで来ない。
+            //   ctrl_src==0は08が「最も近い停止目標＝信号」と決めた車（黄の通過コミット中は car_state==0）
+            if (point(0, "car_state", pt) != 0 && point(0, "ctrl_src", pt) == 0
+             && point(0, "dist_to_signal", pt) < distance(cp, opp_p)) continue;
         }
         // ★ 相手（右折車）が既にyield確定済みなら、自分に道を譲って止まってくれる
         if (point(0, "yield_conflict", pt) == 1) continue;
