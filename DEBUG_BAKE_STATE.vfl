@@ -1,0 +1,44 @@
+// ════════════════════════════════════════════════════
+// DEBUG_BAKE_STATE: Road Line側のベイク済み属性が、今の道路形状に対して
+// 揃っているかをprimごとに見る。道路を作り替えた直後に、12〜15の再クック忘れ／
+// 焼き直し漏れを最初に潰すためのノード。本体のロジックには影響しない。
+//
+// Primitive Wrangle。Input 0: Road Line（12〜15より後段）
+//
+// 書く（すべてdbg_接頭辞）:
+//   i@dbg_n_cross_pos / n_cross_lines / n_line_pos / n_cross_curves / n_curve_pos
+//   f@dbg_cp_offline … 焼いた交錯点が、このprim自身の点からどれだけ離れているか(m)。
+//                      形状を変えたのにベイクが古いと、ここが大きくなる
+//   i@dbg_bake_ok    … 長さの対応が取れていれば1。0のprimだけ見ればよい
+// ════════════════════════════════════════════════════
+
+vector cross_pos[]       = prim(0, "cross_pos",       @primnum);
+string cross_lines[]     = prim(0, "cross_lines",     @primnum);
+vector cross_line_pos[]  = prim(0, "cross_line_pos",  @primnum);
+string cross_curves[]    = prim(0, "cross_curves",    @primnum);
+vector cross_curve_pos[] = prim(0, "cross_curve_pos", @primnum);
+
+i@dbg_n_cross_pos    = len(cross_pos);
+i@dbg_n_cross_lines  = len(cross_lines);
+i@dbg_n_line_pos     = len(cross_line_pos);
+i@dbg_n_cross_curves = len(cross_curves);
+i@dbg_n_curve_pos    = len(cross_curve_pos);
+
+// 長さの対応（13/14は同indexで焼く約束。ズレていれば片方だけ古い）
+i@dbg_bake_ok = (len(cross_lines)  == len(cross_line_pos))
+             && (len(cross_curves) == len(cross_curve_pos));
+
+// ★ 焼いた座標が今の形状の上に乗っているか。ベイクが古いと、交錯点だけが
+//   前の道路の位置に取り残され、07のt_ego/ego_aheadが静かに無意味な値になる
+int pts[] = primpoints(0, @primnum);
+float worst = -1.0;
+foreach (vector cp; cross_line_pos) {
+    if (length(cp) < 1e-4) { worst = max(worst, 9999.0); continue; }   // {0,0,0}＝未ベイク
+    float best = 1e9;
+    foreach (int pt; pts) {
+        vector pp = point(0, "P", pt);   // 型を明示して受ける（distanceの多重定義回避）
+        best = min(best, distance(pp, cp));
+    }
+    worst = max(worst, best);
+}
+f@dbg_cp_offline = worst;   // -1 = 焼かれた交錯点を持たないprim
