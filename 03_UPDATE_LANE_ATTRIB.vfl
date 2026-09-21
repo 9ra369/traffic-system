@@ -35,6 +35,7 @@ if (i@lane_changed == 1) {
             vector cross_line_pos_local[]  = {};
             vector cross_curve_pos_local[] = {};
             i@rt_lookahead = 0;
+            s@next_turn    = "";
             if (len(pr) > 0) {
                 int prim0 = pr[0];
 
@@ -66,6 +67,7 @@ if (i@lane_changed == 1) {
                     if (len(npr) > 0) {
                         int    conn      = npr[0];
                         string conn_turn = prim(1, "turn", conn);   // 型を明示して受ける
+                        s@next_turn = conn_turn;   // 左折・直進も07の候補除外で使う
                         if (conn_turn == "right") {
                             cross_lines_local    = prim(1, "cross_lines",    conn);
                             cross_line_pos_local = prim(1, "cross_line_pos", conn);

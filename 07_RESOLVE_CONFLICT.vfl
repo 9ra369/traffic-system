@@ -201,10 +201,13 @@ if (s@turn != "right" && i@rt_lookahead != 1) {
             //   一致せず除外される（むしろ正確）
             if (point(0, "lane_name",      pt) != opp_lane
              && point(0, "next_lane_name", pt) != opp_lane) continue;
-            // ★ 相手も右折なら、交錯点を渡らずに曲がっていく。
-            //   turnはコネクタに乗ってから、rt_lookaheadはその手前のレーンから立つ
-            if (point(0, "turn", pt) == "right"
-             || point(0, "rt_lookahead", pt) == 1) continue;
+            // ★ 相手が交差点で曲がって出ていくなら、交錯点は渡らない。turnはコネクタに
+            //   乗ってから、next_turn/rt_lookaheadはその手前のレーンから立つ
+            string opp_turn = point(0, "turn",      pt);   // 型を明示して受ける
+            string opp_next = point(0, "next_turn", pt);
+            if (opp_turn == "right" || opp_turn == "left") continue;
+            if (opp_next == "right" || opp_next == "left") continue;
+            if (point(0, "rt_lookahead", pt) == 1)         continue;
             dbg_n_lane += 1;
 
             // このindexの交錯点(t_cp)を相手が既に通過していたら候補から外す。
