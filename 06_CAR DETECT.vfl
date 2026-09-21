@@ -1,15 +1,22 @@
 // ════════════════════════════════════════════════════
 // CAR DETECT: 前方の最近傍車両（同レーン先行車 + 交差/右左折車）
-// 書く: i@car_ptnum, f@dist_to_car, f@car_vel, i@car_signal, i@car_is_cross
+// 書く: i@car_ptnum, f@dist_to_car, f@car_vel, i@car_signal, i@car_is_cross, i@car_stalled
 // ════════════════════════════════════════════════════
 i@car_ptnum    = -1;
 f@dist_to_car  = 9999.0;
 f@car_vel      = 0.0;
 i@car_signal   = -1;
 i@car_is_cross = 0;
+i@car_stalled  = 0;   // デバッグ用：選ばれた前車がレーン非依存のフォールバック由来なら1
 
 float same_dot     = 0.6;   // 同レーン先行車のコーン
 float cross_dot    = 0.1;   // 交差車のコーン（真横よりわずかに前を要求する）
+// 交差道路から入る車は、交差点内に残った右折車をどの経路でも拾えない。
+// レーンに関係なく、速度・距離・横ズレの3つだけで障害物として拾う
+float stalled_vel      = 0.5;    // m/s（これ未満を取り残されているとみなす）
+float stalled_range    = 15.0;   // m（遠いほどコーンが隣の車線に届くので近距離限定）
+float stalled_dot      = 0.9;    // 正面に近いものだけ
+float stalled_corridor = 1.5;    // m（横方向の許容＝半車線）
 
 int pts[] = nearpoints(0, @P, @search_radius*1.1);
 
@@ -29,40 +36,55 @@ foreach(int pt; pts) {
     // 交差点で止まっている前車を見失う
     int same_lane = (other_lane_name == s@lane_name)
                  || (other_lane_name == s@next_lane_name);
-    int is_cross  = 0;
+    int is_cross   = 0;
+    int is_stalled = 0;
 
     if (same_lane) {
         if (fwd_dot < same_dot) continue; //前方の車だけを処理
     } else {
         if (fwd_dot < cross_dot) continue;   // 自分より後方・真横の相手は無視
+        // ★ 相手（右折車）が既にyield確定済みなら、自分に道を譲って止まってくれる。
+        //   下のフォールバックもこの除外を通る（譲っている車を障害物扱いすると互いに待ち合う）
+        if (point(0, "yield_conflict", pt) == 1) continue;
+
         // 右折車のみしか、cross_curvesは持たないから、直進車しかここでは処理されない
         int cross_idx = find(s[]@cross_curves, other_lane_name);
-        if (cross_idx < 0) continue;
+        if (cross_idx >= 0) {
+            // ★ この相手との交錯点を自分が既に通過していたら無視する。
+            //   fwd_dot >= 0 は180度の半空間なので、真横にいる右折車まで拾ってしまう。
+            //   交錯点座標はcross_curvesと同indexで14_BAKE_CROSS_CURVES.vflがベイク済み
+            vector cross_ps[] = v[]@cross_curve_pos;
+            if (cross_idx < len(cross_ps)) {
+                vector cp     = cross_ps[cross_idx];
+                vector to_cp  = cp - @P;
+                float  len_cp = length(to_cp);
+                if (len_cp > 1e-4 && dot(normalize(v@dir), to_cp / len_cp) <= 0) continue;
 
-        // ★ この相手との交錯点を自分が既に通過していたら無視する。
-        //   fwd_dot >= 0 は180度の半空間なので、真横にいる右折車まで拾ってしまう。
-        //   交錯点座標はcross_curvesと同indexで14_BAKE_CROSS_CURVES.vflがベイク済み
-        vector cross_ps[] = v[]@cross_curve_pos;
-        if (cross_idx < len(cross_ps)) {
-            vector cp     = cross_ps[cross_idx];
-            vector to_cp  = cp - @P;
-            float  len_cp = length(to_cp);
-            if (len_cp > 1e-4 && dot(normalize(v@dir), to_cp / len_cp) <= 0) continue;
-
-            // ★ 信号の停止線が交錯点より手前なら、その相手は交錯点まで来ない。
-            //   ctrl_src==0は08が「最も近い停止目標＝信号」と決めた車（黄の通過コミット中は car_state==0）
-            if (point(0, "car_state", pt) != 0 && point(0, "ctrl_src", pt) == 0
-             && point(0, "dist_to_signal", pt) < distance(cp, opp_p)) continue;
+                // ★ 信号の停止線が交錯点より手前なら、その相手は交錯点まで来ない。
+                //   ctrl_src==0は08が「最も近い停止目標＝信号」と決めた車（黄の通過コミット中は car_state==0）
+                if (point(0, "car_state", pt) != 0 && point(0, "ctrl_src", pt) == 0
+                 && point(0, "dist_to_signal", pt) < distance(cp, opp_p)) continue;
+            }
+            is_cross = 1;
+        } else {
+            // ★ レーン非依存のフォールバック。止まっていることを必須にするので、
+            //   走行中の他レーンの車（対向直進・隣車線）は拾わない
+            if (point(0, "vel", pt) >= stalled_vel) continue;
+            if (d > stalled_range)                  continue;
+            if (fwd_dot < stalled_dot)              continue;
+            float lat = length(to_other - (fwd_dot * d) * normalize(v@dir));
+            if (lat > stalled_corridor)             continue;
+            // is_cross扱い：09は静止障害物向けのs0/Tを使い、07のlead_headwayからも外れる
+            is_cross   = 1;
+            is_stalled = 1;
         }
-        // ★ 相手（右折車）が既にyield確定済みなら、自分に道を譲って止まってくれる
-        if (point(0, "yield_conflict", pt) == 1) continue;
-        is_cross = 1;
     }
 
     if (d < f@dist_to_car) {
         f@dist_to_car  = d;
         i@car_ptnum    = pt;
         i@car_is_cross = is_cross;
+        i@car_stalled  = is_stalled;
 
         // IDM用: 自車進行方向へ射影した前方速度
         float  v_other   = point(0, "vel", pt);

@@ -1,0 +1,34 @@
+// ════════════════════════════════════════════════════
+// PED CROSSING: 横断歩道ポイントに ped_crossing を付与
+// レーンごとに置いた静止点が歩行者を検知し、05_HUMAN DETECTが
+// この点をlane_nameで引いて停止判断に使う。
+//
+// Input 0: 横断歩道ポイント（自分。lane_nameを持つ）
+// Input 1: 歩行者ポイント（dirを持つ）
+// 書く: i@ped_crossing
+// ════════════════════════════════════════════════════
+
+// 毎フレーム作り直す。残すとソルバ/キャッシュ経由で1に固着する
+i@ped_crossing = 0;
+
+float radius = chf("radius");
+float hold   = chf("hold_radius");   // この距離内はレーン上とみなし、向きを問わず保持
+
+foreach (int pt; nearpoints(1, @P, radius)) {
+    vector to_ped = point(1, "P", pt) - @P;
+    float  d      = length(to_ped);
+
+    // ★ 歩行者が点を通過するとto_pedがdirと同じ向きに反転し、下の向き判定が
+    //   その瞬間に外れる。だがレーン幅の残り半分はまだ渡り切っていないので、
+    //   近距離では向きを見ずに保持する（早期解除で車が発進するのを防ぐ）
+    if (d < hold) {
+        i@ped_crossing = 1;
+        break;
+    }
+
+    // 遠い相手は「近づいてくる人」だけ拾う
+    if (dot(point(1, "dir", pt), to_ped / d) < 0.6) {
+        i@ped_crossing = 1;
+        break;
+    }
+}
