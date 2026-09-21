@@ -281,7 +281,7 @@ if (s@turn != "right" && i@rt_lookahead != 1) {
         float ego_ahead = dot(normalize(v@dir), ego_to_cp);   // m（正なら前方）
         // t_cpが{0,0,0}でも自車が原点から離れていればdCpは大きい。座標だけでは
         // 未ベイクを検出できないので、03が立てたcp_bakedと併せて見る
-        int   cp_valid  = (dCp > 1e-4) && (i@cp_baked == 1);
+        int   cp_valid  = (dCp > 1e-4) && (i@cp_baked != 0);   // -1=判定対象外は素通し
         if (cp_valid) {
             dbg_ego_fwd = ego_ahead;
             dbg_dcp     = dCp;
