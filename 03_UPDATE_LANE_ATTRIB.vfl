@@ -4,7 +4,6 @@ if (i@lane_changed == 1) {
     int pt = nearpoint(1, "@lane_name=" + s@lane_name, @P);
     if (pt >= 0) {
         i@lane_id = point(1, "lane_id", pt);
-        i@lane_changed = 0;   // 解決できたらオフ
 
         //lane_idを取得
         int lane_pt = findattribval(1, "point", "lane_id", i@lane_id);
@@ -109,6 +108,11 @@ if (i@lane_changed == 1) {
                 //   （ego_aheadが急に負へ跳ねてgo_reason=3で譲りが外れる）
                 v[]@rt_target_cp   = cross_line_pos_local;
             }
+
+            // ★ フラグを下ろすのはここまで来られたときだけ。lane_pt解決前に下ろすと、
+            //   passed/cross_pos/cross_linesが前のレーンの値のまま残り、次フレームの
+            //   再試行も走らない（___SPEC.mdのリトライパターン）
+            i@lane_changed = 0;
         }
     }
 }
