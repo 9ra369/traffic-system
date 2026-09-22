@@ -209,9 +209,13 @@ if (s@turn != "right" && i@rt_lookahead != 1) {
             string opp_next = point(0, "next_turn", pt);
             // 直進レーンの点はturnが既定値("")のことがある。010と同じく""も直進扱い
             int opp_straight = (opp_turn == "straight" || opp_turn == "");
+            // ★ next_turn/rt_lookaheadは「次に乗るコネクタ」なので、opp_laneに入る前の
+            //   後続車では意味が変わる（opp_laneへの入り方を指す）。乗っている相手だけに効かせる
+            int on_opp_lane = (point(0, "lane_name", pt) == opp_lane);
             if (opp_turn == "left" || opp_turn == "right") { dbg_n_turnout += 1; continue; }
-            if (opp_straight && (opp_next == "left" || opp_next == "right")) { dbg_n_turnout += 1; continue; }
-            if (point(0, "rt_lookahead", pt) == 1) { dbg_n_turnout += 1; continue; }
+            if (on_opp_lane && opp_straight
+             && (opp_next == "left" || opp_next == "right")) { dbg_n_turnout += 1; continue; }
+            if (on_opp_lane && point(0, "rt_lookahead", pt) == 1) { dbg_n_turnout += 1; continue; }
             dbg_n_lane += 1;
 
             // このindexの交錯点(t_cp)を相手が既に通過していたら候補から外す。
