@@ -40,4 +40,24 @@ if (i@car_state == 2) {
 
     @v  = v@dir * f@vel;
     @P += @v * @dt;
+
+    // ── レーン中心線への横方向補正 ───────────────────
+    // 位置はdirの積分だけで決まり、横ズレを戻す仕組みが無かった。
+    // ゲインは「進んだ距離あたり」にして、軌跡が速度に依存しないようにする
+    float lane_snap = chf("lane_snap");   // 1/m。0で無効
+    int    hp = -1;
+    vector uvw = 0;
+    if (lane_snap > 0 && i@lane_prim >= 0)
+        xyzdist(1, itoa(i@lane_prim), @P, hp, uvw);   // 02が特定したprim1本に限定
+    if (hp >= 0) {
+        vector onlane = primuv(1, "P", hp, uvw);
+        vector fwd    = normalize(v@dir);
+        vector lat    = onlane - @P;
+        lat -= dot(lat, fwd) * fwd;       // 前後成分は捨てる。06/07の距離判定を動かさない
+
+        f@dbg_lane_lat = length(lat);
+        // 極端なズレは別レーンへ引かれている疑い。黙って寄せずに値だけ残す
+        if (f@dbg_lane_lat < chf("lane_snap_max"))
+            @P += lat * min(lane_snap * f@vel * @dt, 1.0);
+    }
 }

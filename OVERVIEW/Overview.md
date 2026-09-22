@@ -74,6 +74,7 @@
 | `turn` | string | `"left"`/`"right"`/`"straight"`/`""`（既定＝直進扱い） | 03（毎フレーム更新）, 07, 010 |
 | `lane_id` | int | 現在のレーン（分割・コネクタ生成後の最終スプライン）を一意に識別するID。位置追跡の主キー兼`cross_lines`との照合キー。`lane_changed`時に1回だけ確定し、以後そのレーンにいる間は書き換えない（`src_id`廃止に伴い2026-09-10変更） | 03（`lane_changed`時に確定）, 07 |
 | `u` | float | 現在レーンspline上のパラメトリック位置 | 02 |
+| `lane_prim` | int | 現在乗っているレーンのprim番号。`02`の`xyzdist`が返した`hitprim`をそのまま保持し、`010`の横方向補正が寄せる先のprimを1本に限定するのに使う | 01, 02（毎フレーム更新）, 010 |
 | `car_state` | int | 0=CRUISING / 1=BRAKING / 2=STOPPED | 01, 08, 09, 010, 011 |
 | `yellow_commit` | int | 黄信号を止まらず通過するとコミット済みか（旧`go`） | 01, 08 |
 | `yellow_judged` | int | 今回の黄信号での可否判定を済ませたか。**01_INITでの初期化なし**（暗黙の0初期値に依存） | 08 |

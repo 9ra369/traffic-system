@@ -4,6 +4,7 @@
 int hitprim;
 vector uvw;
 float d = xyzdist(1, s@lane_name, @P, hitprim, uvw);
+i@lane_prim = hitprim;   // 010の横方向補正が寄せる先。見つからなければ-1が入る
 
 if (hitprim >= 0) {          // 見つかったか確認
     @u = uvw.x;
