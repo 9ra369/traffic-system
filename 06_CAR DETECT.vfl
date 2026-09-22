@@ -18,6 +18,9 @@ float stalled_range    = 15.0;   // m（遠いほどコーンが隣の車線に�
 float stalled_dot      = 0.9;    // 正面に近いものだけ
 float stalled_corridor = 1.5;    // m（横方向の許容＝半車線）
 
+// 右折中＝コネクタ上（turn=="right"）か、1つ手前のレーンで先読み中（rt_lookahead）
+int turning_right = (s@turn == "right" || i@rt_lookahead == 1);
+
 int pts[] = nearpoints(0, @P, @search_radius*1.1);
 
 foreach(int pt; pts) {
@@ -46,6 +49,17 @@ foreach(int pt; pts) {
         // ★ 相手（右折車）が既にyield確定済みなら、自分に道を譲って止まってくれる。
         //   下のフォールバックもこの除外を通る（譲っている車を障害物扱いすると互いに待ち合う）
         if (point(0, "yield_conflict", pt) == 1) continue;
+
+        // ★ 右折中は左折車を進路が交わる相手として扱わない（07の候補除外と同じ扱い）。
+        //   コネクタ上の左折車と、手前の直進レーンで左折待ちの車の2経路で拾う。
+        //   同じ出口レーンへ合流してくる左折車は上のsame_laneで前車として拾う
+        if (turning_right) {
+            string other_turn = point(0, "turn",      pt);
+            string other_next = point(0, "next_turn", pt);
+            if (other_turn == "left") continue;
+            // 直進レーンの点はturnが既定値("")のことがある。010と同じく""も直進扱い
+            if ((other_turn == "straight" || other_turn == "") && other_next == "left") continue;
+        }
 
         // 右折車のみしか、cross_curvesは持たないから、直進車しかここでは処理されない
         int cross_idx = find(s[]@cross_curves, other_lane_name);
