@@ -61,11 +61,23 @@ if (i@lane_changed == 1) {
                 // 持つので、上と同じ引き方をnext_lane_nameに対して行えば先に読める
                 // （CHANGES/2026-09-20_右折yieldがgoに倒れる問題.md）
                 if (s@next_lane_name != "") {
-                    int npt   = nearpoint(1, "@lane_name=" + s@next_lane_name, @P);
-                    int npr[] = {};
-                    if (npt >= 0) npr = pointprims(1, npt);
-                    if (len(npr) > 0) {
-                        int    conn      = npr[0];
+                    // ★ 最寄り点のprimをそのまま使うと、行き先レーン本体や別の入口から来た
+                    //   コネクタを掴む。前者はturnを持たないのでnext_turnが""のまま残り、
+                    //   07の左折除外が黙って効かなくなる。is_connectorとprev_laneで選び直す
+                    int conn = -1, conn_any = -1;
+                    foreach (int np; nearpoints(1, "@lane_name=" + s@next_lane_name, @P, 1e9, 8)) {
+                        int nprs[] = pointprims(1, np);
+                        if (len(nprs) == 0) continue;
+                        int c       = nprs[0];              // 1 prim = 1 レーン
+                        int is_conn = prim(1, "is_connector", c);
+                        if (is_conn != 1) continue;
+                        if (conn_any < 0) conn_any = c;
+                        int c_prev = prim(1, "prev_lane", c);
+                        if (c_prev == i@lane_id) { conn = c; break; }   // 自分のレーンから出るコネクタ
+                    }
+                    // 既にコネクタ上にいるときはprev_laneが自分のlane_idと一致しない
+                    if (conn < 0) conn = conn_any;
+                    if (conn >= 0) {
                         string conn_turn = prim(1, "turn", conn);   // 型を明示して受ける
                         s@next_turn = conn_turn;   // 左折・直進も07の候補除外で使う
                         if (conn_turn == "right") {

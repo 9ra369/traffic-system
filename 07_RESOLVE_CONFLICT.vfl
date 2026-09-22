@@ -84,6 +84,7 @@ if (s@turn != "right" && i@rt_lookahead != 1) {
     i@dbg_n_lane       = 0;
     i@dbg_n_alive      = 0;
     i@dbg_n_sigstop    = 0;
+    i@dbg_n_turnout    = 0;
     i@dbg_n_cross      = 0;
     if (i@rt_boost > 0) i@rt_boost -= 1;   // 右折区間を抜けた後も残りの分だけ上乗せさせる
     i@yield_conflict   = 0;
@@ -96,7 +97,7 @@ if (s@turn != "right" && i@rt_lookahead != 1) {
     float v_floor        = 1;               // m/s
     float vel_stopped    = 0.1;               // m/s（これ未満は停止中とみなす。M6）
     float stop_margin    = 0.5;               // m（交錯点上に居座らないための最小距離。08のstop_offset=1より小さくすること）
-    int   clear_frames   = 24;                // 脅威なしが何フレーム続いたらyieldを解除するか
+    int   clear_frames   = 15;                // 脅威なしが何フレーム続いたらyieldを解除するか
     int   boost_frames   = 48;                // yield解除後、何フレームの間だけ09が加速を上乗せするか
     float ego_ahead_min  = 0.0;               // m（進行方向への射影がこれ未満なら交錯点を通過したとみなす）
     float emerg_decel_ratio = 3.0;            // 「止まり切れるか」判定に使う制動力のmax_decel倍率
@@ -139,6 +140,7 @@ if (s@turn != "right" && i@rt_lookahead != 1) {
     int dbg_n_car     = 0;   // 車だった点（indexに依存しないのでidx==0でだけ数える）
     int dbg_n_lane    = 0;   // ＋相手レーン(opp_lane)一致かつ右折中でない（全indexの合計）
     int dbg_n_sigstop = 0;   // そのうち信号で止まるので候補から外した相手（同上）
+    int dbg_n_turnout = 0;   // 曲がって出ていくので外した相手（左折・右折・右折待ち）
     int dbg_n_alive   = 0;   // ＋交錯点をまだ抜けていない＝実際にTTC評価した候補（同上）
 
     for (int idx = 0; idx < n_cross; idx++) {
@@ -205,9 +207,11 @@ if (s@turn != "right" && i@rt_lookahead != 1) {
             //   乗ってから、next_turn/rt_lookaheadはその手前のレーンから立つ
             string opp_turn = point(0, "turn",      pt);   // 型を明示して受ける
             string opp_next = point(0, "next_turn", pt);
-            if (opp_turn == "right" || opp_turn == "left") continue;
-            if (opp_next == "right" || opp_next == "left") continue;
-            if (point(0, "rt_lookahead", pt) == 1)         continue;
+            // 直進レーンの点はturnが既定値("")のことがある。010と同じく""も直進扱い
+            int opp_straight = (opp_turn == "straight" || opp_turn == "");
+            if (opp_turn == "left" || opp_turn == "right") { dbg_n_turnout += 1; continue; }
+            if (opp_straight && (opp_next == "left" || opp_next == "right")) { dbg_n_turnout += 1; continue; }
+            if (point(0, "rt_lookahead", pt) == 1) { dbg_n_turnout += 1; continue; }
             dbg_n_lane += 1;
 
             // このindexの交錯点(t_cp)を相手が既に通過していたら候補から外す。
@@ -358,6 +362,7 @@ if (s@turn != "right" && i@rt_lookahead != 1) {
     i@dbg_n_car     = dbg_n_car;
     i@dbg_n_lane    = dbg_n_lane;
     i@dbg_n_sigstop = dbg_n_sigstop;
+    i@dbg_n_turnout = dbg_n_turnout;
     i@dbg_n_alive   = dbg_n_alive;
     i@dbg_n_cross   = n_cross;   // 交錯レーン数。n_lane/n_aliveはこの本数ぶんの合計
 
