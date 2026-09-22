@@ -67,8 +67,8 @@
 | `id` | int | 車ごとの一意なID（Houdini標準）。乱数シードや[[07_RESOLVE_CONFLICT]]の相手車追跡キーに使用 | 全体 |
 | `lane_name` | string | 現在走行中のレーン名（旧`road_name`）。spawn時にレーンから継承、末端で更新 | 02, 03, 04, 05, 06 |
 | ~~`src_id`~~ | int | **廃止（2026-09-10）**。旧: 現在のレーンの元スプラインID（旧`road_id`）で位置追跡の起点だったが、左右分割・複数車線化で複数の最終レーンが同じ値を共有しうる（対向車線・並走車線）ため、`nearpoint`/`findattribval`のキーとしては不正確だった。`lane_id`に置き換え済み。旧版は`BACKUP/03_UPDATE_LANE_ATTRIB.vfl`参照 | （廃止） |
-| `lane_changed` | int | レーンが切り替わった直後を示すフラグ（旧`road_changed`） | 02, 03 |
-| `next_lane_name` | string | 次に進むレーン名（旧`next_road`） | 02, 03 |
+| `lane_changed` | int | レーンが切り替わった直後を示すフラグ（旧`road_changed`）。スポーン直後も03に一度引かせるため`01_INIT`で1にする | 01, 02, 03 |
+| `next_lane_name` | string | 次に進むレーン名（旧`next_road`） | 01, 02, 03 |
 | `dir` | vector | 進行方向（正規化済み） | 03（毎フレーム更新）, 06, 07, 010 |
 | `curv` | float | 現在地点の曲率（0-1正規化） | 03（毎フレーム更新）, 010 |
 | `turn` | string | `"left"`/`"right"`/`"straight"`/`""`（既定＝直進扱い） | 03（毎フレーム更新）, 07, 010 |
@@ -101,7 +101,7 @@
 | `P`, `v` | vector | 位置・速度ベクトル（Houdini標準） | 010 |
 | `Cd` | vector | ビューポート表示色 | 011 |
 
-**注記**：`lane_name` / `lane_id` / `lane_changed` / `dir` / `curv` / `turn` は`01_INIT`では初期化されていない。スポーン時に道路ネットワーク側からコピーされて最初の値を持つ想定と思われるが、`___SPEC.md`（旧アーキテクチャ、当時の主キーは`src_id`）では`src_id=-1`・`lane_changed=1`をINITに置く設計だったため、現行実装と食い違いがある。スポーン時の初期値がどこから来るのか要確認（`src_id`は2026-09-10に`lane_id`へ置き換えたが、この初期化ギャップ自体は未解決のまま持ち越し）。
+**注記**：`lane_name` / `lane_id` / `dir` / `curv` / `turn` は`01_INIT`では初期化されておらず、スポーン時に道路ネットワーク側からコピーされて最初の値を持つ想定。`lane_changed`だけは`01_INIT`で1にしており（2026-09-22）、これによりスポーン後の最初のフレームで`03_UPDATE_LANE_ATTRIB`が`lane_id`/`next_lane_name`/`next_turn`/`rt_lookahead`/`cross_lines`を揃って解決する。`___SPEC.md`（旧アーキテクチャ、当時の主キーは`src_id`）が`lane_changed=1`をINITに置いていたのと同じ形に戻した。ただし`s@lane_name`がスポーン時に入っていることが前提で、空だと03が解決できず`lane_changed`が1のまま再試行を続ける。
 
 ### 3.2 レーンネットワーク（Input 2nd = Road Line。Solver内ではInput 1として参照される）
 

@@ -13,6 +13,11 @@ i@car_state     = 0;    // 0=CRUISING  1=BRAKING  2=STOPPED
 i@yellow_commit = 0;    // 0=通常停止判断  1=黄色通過コミット済み
 i@lane_end_count = 0;   // 行き先が無いまま末端に張り付いたフレーム数（02が加算、24で削除）
 i@lane_prim      = -1;  // 現在乗っているレーンのprim番号（02が毎フレーム更新、010が横方向補正に使う）
+// ★ スポーン直後も03に一度レーン情報を引かせる。next_lane_name/next_turn/rt_lookahead/
+//   cross_linesは03のlane_changedブロックでしか作られないので、ここで立てないと
+//   最初のレーンを走り切るまで空のまま＝右折の先読みと06/07の左折除外が効かない
+i@lane_changed   = 1;
+s@next_lane_name = "";  // 03が埋めるまでの値。02はこれが空なら乗り換えない（next_turnは下の右折セクション）
 i@cp_baked      = -1;   // -1=判定対象外 0=cross_line_posが焼けていない 1=焼けている
                         //（03がlane_changed時に判定、07がgo_reason=4で表に出す）
 
