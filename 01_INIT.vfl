@@ -73,3 +73,12 @@ f@max_decel     = fit01(rand(@id + 0.31),  0.9,  1.5);   // m/s²
 // ── 速度（INTEGRATEが毎フレーム更新） ─────────────────
 f@vel   = 0.0;
 f@accel = 0.0;
+
+// ── 衝突記録（012_COLLISIONが毎フレーム更新。デバッグ表示用） ────
+i@collided      = 0;       // 1=一度でも接触した（以後ラッチ。ピンク表示の条件）
+i@collide_now   = 0;       // 1=このフレームで接触中
+i@collide_count = 0;       // 接触した回数（接触の立ち上がりで加算）
+i@collide_id    = -1;      // 最初にぶつかった相手の@id
+i@collide_frame = -1;      // 最初に接触したフレーム
+v@collide_pos   = {0, 0, 0};  // ぶつかった地点（2台の中点）。23_VIZ_COLLISIONが円を描く位置
+f@collide_dist  = 9999.0;  // 最も近づいたときの点間距離

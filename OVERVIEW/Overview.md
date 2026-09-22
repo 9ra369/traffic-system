@@ -18,6 +18,7 @@
 | [[09_ACCEL]] | STATEの状態に応じてIDM等で加速度を計算 |
 | [[010_INTEGRATE]] | 速度・位置を積分して更新 |
 | [[011_COLORIZE]] | `car_state`等からビューポート表示色(`Cd`)を決定 |
+| [[012_COLLISION]] | 車同士の点が接触距離（既定0.5m）まで近づいたことを記録し、その車を`Cd`=ピンクで上書き。Solverの最後（011の後ろ）に置くデバッグ表示。接触地点の円は`23_VIZ_COLLISION`がSolverの外で描く |
 | [[11_CONNECT_LANE]] | 道路ネットワーク生成側：交差点の入口/出口点から接続曲線(コネクタ)を作り、`next_lanes`・`cross_lines`等の交差点まわりの属性を配る |
 | [[12_BAKE_CROSS_POS]] | 道路ネットワーク生成側：直進レーンの交錯点座標を`cross_pos`としてRoad Line側（point/prim両方）に焼き込む。従来は車が`lane_changed`時に交錯点ジオメトリへ`nearpoint`していたが、右折車がlane_idキーで直接引けるようにするためのベイク（M6b） |
 
@@ -50,7 +51,7 @@
 
 ## 2. パイプライン概要
 
-01_INIT → 02_CHANGE ROAD → 03_UPDATE_LANE_ATTRIB → 04_SIGNAL DETECT → 05_HUMAN DETECT → 06_CAR DETECT → 07_RESOLVE_CONFLICT → 08_STATE → 09_ACCEL → 010_INTEGRATE → 011_COLORIZE
+01_INIT → 02_CHANGE ROAD → 03_UPDATE_LANE_ATTRIB → 04_SIGNAL DETECT → 05_HUMAN DETECT → 06_CAR DETECT → 07_RESOLVE_CONFLICT → 08_STATE → 09_ACCEL → 010_INTEGRATE → 011_COLORIZE → 012_COLLISION
 
 （`11_CONNECT_LANE` / `12_BAKE_CROSS_POS` は上記と別系統：車両シミュレーション本体ではなく、道路ネットワークジオメトリを事前生成するSOP側の処理。`12_BAKE_CROSS_POS`は`11_CONNECT_LANE`の後段、車Solverより前に1回だけ通す）
 
@@ -100,7 +101,11 @@
 | `dt` | float | `@TimeInc`のコピー | 010 |
 | `search_radius` | float | 検出半径。04で速度連動計算され、06でも流用される（ノードをまたいで使い回す前提） | 04, 06 |
 | `P`, `v` | vector | 位置・速度ベクトル（Houdini標準） | 010 |
-| `Cd` | vector | ビューポート表示色 | 011 |
+| `collided` / `collide_now` | int | 一度でも接触したか（ラッチ。ピンク表示の条件）/ このフレームで接触中か | 01, 012 |
+| `collide_count` | int | 接触の回数（接触の立ち上がりで加算） | 01, 012 |
+| `collide_id` / `collide_frame` / `collide_pos` | int/int/vector | 最初にぶつかった相手の`id`・フレーム・地点（2台の中点）。地点は`23_VIZ_COLLISION`が円を描く位置 | 01, 012 |
+| `collide_dist` | float | 最も近づいたときの点間距離（しきい値のチューニング用） | 01, 012 |
+| `Cd` | vector | ビューポート表示色。衝突した車だけ012がピンクで上書きする | 011, 012 |
 
 **注記**：`lane_name` / `lane_id` / `dir` / `curv` / `turn` は`01_INIT`では初期化されておらず、スポーン時に道路ネットワーク側からコピーされて最初の値を持つ想定。`lane_changed`だけは`01_INIT`で1にしており（2026-09-22）、これによりスポーン後の最初のフレームで`03_UPDATE_LANE_ATTRIB`が`lane_id`/`next_lane_name`/`next_turn`/`rt_lookahead`/`cross_lines`を揃って解決する。`___SPEC.md`（旧アーキテクチャ、当時の主キーは`src_id`）が`lane_changed=1`をINITに置いていたのと同じ形に戻した。ただし`s@lane_name`がスポーン時に入っていることが前提で、空だと03が解決できず`lane_changed`が1のまま再試行を続ける。
 

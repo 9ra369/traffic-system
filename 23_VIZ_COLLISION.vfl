@@ -1,0 +1,41 @@
+// ════════════════════════════════════════════════════
+// VIZ_COLLISION: 012_COLLISIONが記録した衝突地点(v@collide_pos)に円を描く。
+// 車自体のピンクは012が塗る。ここは「どこでぶつかったか」を地面に残すためのもの。
+//
+// ★ 点とprimを追加するので、絶対にSolverの中には置かないこと（21/22と同じ）。
+// ★ 012_COLLISIONより後（Solverの直後）に置く。
+//
+// Input 0: 車両（Solverの出力）
+//
+// 作るもの: 水平な円（グループ "collisions"）
+//   i@col_id    (prim) … ぶつかった相手の@id
+//   i@col_frame (prim) … 接触したフレーム
+//   f@col_age   (prim) … 接触からの経過フレーム
+// ════════════════════════════════════════════════════
+
+int   nseg        = 24;
+float radius      = chf("collide_viz_radius");   // m（例: 2.0）
+float show_frames = chf("collide_viz_frames");   // 0=ずっと表示
+float lift        = 0.05;                        // 地面と重なってちらつかないよう浮かせる
+
+if (i@car != 1) return;
+if (i@collided != 1) return;
+
+float age = @Frame - float(i@collide_frame);
+if (show_frames > 0 && age > show_frames) return;
+
+vector c   = v@collide_pos + set(0, lift, 0);
+vector col = set(1.0, 0.15, 0.7);
+
+int ring = addprim(0, "polyline");
+setprimattrib(0, "col_id",    ring, i@collide_id);
+setprimattrib(0, "col_frame", ring, i@collide_frame);
+setprimattrib(0, "col_age",   ring, age);
+setprimgroup(0, "collisions", ring, 1);
+
+for (int k = 0; k <= nseg; k++) {   // 最後に始点へ戻して閉じる
+    float a  = 2.0 * M_PI * float(k) / float(nseg);
+    int   pt = addpoint(0, c + set(cos(a), 0, sin(a)) * radius);
+    setpointattrib(0, "Cd", pt, col);
+    addvertex(0, ring, pt);
+}
