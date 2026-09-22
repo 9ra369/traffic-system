@@ -15,6 +15,7 @@ if (hitprim >= 0) {          // 見つかったか確認
         // next_lane_nameが空のまま切り替えると、03のnearpointが解決できず
         // lane_changedが1で固着し、passed/cross_lines等が前のレーンの値のまま残る。
         // endが0なのにここで止まる車がいたら、next_lanesの引き当て失敗を疑う
+        s@past_lane = s@lane_name;   // 上書き前に退避。06が「自分のレーンから出ていった前車」を拾うのに使う
         s@lane_name = s@next_lane_name;
         i@lane_changed = 1;
     }

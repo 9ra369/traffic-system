@@ -37,8 +37,12 @@ foreach(int pt; pts) {
     // 交差点に入った前車はコネクタ＝行き先レーンのlane_nameに変わる一方、後続車は
     // 手前まで来ないと切り替わらない。next_lane_nameも同一レーン扱いにしないと、
     // 交差点で止まっている前車を見失う
+    // ★ 自分がその行き先へ行かない場合（前車だけ右折）はnext_lane_nameでも一致しないので、
+    //   past_lane（02が退避した直前のlane_name）で自分のレーンから出ていった前車も拾う
+    string other_past = point(0, "past_lane", pt);   // 空同士で一致させない
     int same_lane = (other_lane_name == s@lane_name)
-                 || (other_lane_name == s@next_lane_name);
+                 || (other_lane_name == s@next_lane_name)
+                 || (other_past != "" && other_past == s@lane_name);
     int is_cross   = 0;
     int is_stalled = 0;
 
