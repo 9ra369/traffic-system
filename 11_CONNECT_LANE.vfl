@@ -34,6 +34,7 @@ foreach(int ip; in_pts) {
     }
 
     string candidates[];
+    string candidate_turns[];   // ★ candidatesと同index。03が選んだ行き先のturnをそのまま引く
     foreach(int op; out_pts) {
         // 同じ交差点(intersection_id一致)の出口を総当たり
         if (point(0, "intersection_id", op) != in_intersection_id) continue;
@@ -59,7 +60,8 @@ foreach(int ip; in_pts) {
         int    out_src_id = point(0, "src_id", op);   // ★ 行き先レーンの src_id をコネクタにも複製する
         float  out_curv    = point(0, "curv", op);      // ★ 同様に curv も複製（未設定だとカーブで減速できない）
         // ここで、inからoutへの候補となるlane_nameを格納
-        append(candidates, lane_name);
+        append(candidates,      lane_name);
+        append(candidate_turns, turn_out);
         // 入口点と出口点をつなぐラインの生成開始
         // Houdiniのジオメトリでは「点(point)」と「プリミティブ(primitive)」は別物で、両者を繋ぐのが「頂点(vertex)」
         int prim = addprim(0, "polyline"); // まだ中身が空の"polyline"プリミティブの器だけを作る
@@ -113,6 +115,9 @@ foreach(int ip; in_pts) {
         setprimattrib(0, "lane_index", prim, out_lane_index);
         setprimattrib(0, "src_id", prim, in_src_id);              // ★ 元ラインのsrc_idを継承
         setprimattrib(0, "next_lane", prim, lane_name);       // この線がどのレーンに繋がるか
+        // コネクタ上の車もnext_lanes（1本）と同indexで引けるようにしておく
+        string connect_turns[] = array(turn_out);   // 型を明示しないとsetprimattribが多重定義で曖昧になる
+        setprimattrib(0, "next_turns", prim, connect_turns);
         setprimgroup(0, "connectors", prim, 1);               // 接続線をまとめて選べるようにグループ化
         setprimattrib(0, "is_curved", prim, is_curved);
         setprimattrib(0, "prev_lane", prim, prev_lane);
@@ -122,6 +127,9 @@ foreach(int ip; in_pts) {
         else           setprimgroup(0, "straight", prim, 1);
     }
     setpointattrib(0, "next_lanes", ip, candidates);
+    // ★ next_lanesと同じループから出すのでindex一致が構造的に保証される。
+    //   03はこのindexで引くだけになり、コネクタを位置から探し直さなくて済む
+    if (len(ip_prims) > 0) setprimattrib(0, "next_turns", ip_prims[0], candidate_turns);
 }
 
 // ===== 全体の流れまとめ =====

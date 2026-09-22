@@ -12,16 +12,15 @@ if (i@lane_changed == 1) {
             // 次に進むべきレーンを決定
             string nexts[] = point(1, "next_lanes", lane_pt);
             int n = len(nexts);
+            // 選んだindexは下の先読みでnext_turnsを引くのにも使う
+            int next_idx = -1;
             if (n == 1) {
-                s@next_lane_name = nexts[0];
+                next_idx = 0;
             //次のLaneが複数ある時
             } else if (n > 1) {
-                int idx = int(rand(@id + i@lane_id) * n);  // 車×道路でseed
-                idx = min(idx, n - 1);
-                s@next_lane_name = nexts[idx];
-            } else {
-                s@next_lane_name = "";   // 候補なし(行き止まり等)
+                next_idx = min(int(rand(@id + i@lane_id) * n), n - 1);  // 車×道路でseed
             }
+            s@next_lane_name = (next_idx >= 0) ? nexts[next_idx] : "";   // 候補なし(行き止まり等)は空
 
             // 新しいレーンの交錯点情報を作り直す（直進車のみ使う）
             i@passed             = 0;
@@ -36,6 +35,8 @@ if (i@lane_changed == 1) {
             vector cross_curve_pos_local[] = {};
             i@rt_lookahead = 0;
             s@next_turn    = "";
+            i@nt_baked     = -1;   // -1=判定せず 0=next_turnsの本数不一致 1=一致（11の焼き漏れ検出）
+            i@dbg_conn     = -1;   // デバッグ用：右折の先読みで引いたコネクタprim（-1=引けず）
             if (len(pr) > 0) {
                 int prim0 = pr[0];
 
@@ -49,38 +50,30 @@ if (i@lane_changed == 1) {
                 cross_lines_local  = prim(1, "cross_lines",  prim0);
                 cross_curves_local = prim(1, "cross_curves", prim0);
                 // 相手(直進)レーン側の交錯点座標。cross_linesと同indexで
-                // 13_BAKE_CROSS_LINES.vflがベイク済み
                 cross_line_pos_local = prim(1, "cross_line_pos", prim0);
                 // 自分(直進レーン)側の交錯点座標。cross_curvesと同indexで
-                // 14_BAKE_CROSS_CURVES.vflがベイク済み。06の交差車判定で使う
                 cross_curve_pos_local = prim(1, "cross_curve_pos", prim0);
 
                 // ── 右折の先読み ──────────────────────────────
-                // 交錯情報はコネクタprimにしか無いため、乗ってから判断すると交錯点まで
-                // 数mしかなく物理的に止まれない。コネクタの点は行き先レーンのlane_nameを
-                // 持つので、上と同じ引き方をnext_lane_nameに対して行えば先に読める
-                // （CHANGES/2026-09-20_右折yieldがgoに倒れる問題.md）
-                if (s@next_lane_name != "") {
-                    // ★ 最寄り点のprimをそのまま使うと、行き先レーン本体や別の入口から来た
-                    //   コネクタを掴む。前者はturnを持たないのでnext_turnが""のまま残り、
-                    //   07の左折除外が黙って効かなくなる。is_connectorとprev_laneで選び直す
-                    int conn = -1, conn_any = -1;
-                    foreach (int np; nearpoints(1, "@lane_name=" + s@next_lane_name, @P, 1e9, 8)) {
-                        int nprs[] = pointprims(1, np);
-                        if (len(nprs) == 0) continue;
-                        int c       = nprs[0];              // 1 prim = 1 レーン
-                        int is_conn = prim(1, "is_connector", c);
-                        if (is_conn != 1) continue;
-                        if (conn_any < 0) conn_any = c;
-                        int c_prev = prim(1, "prev_lane", c);
-                        if (c_prev == i@lane_id) { conn = c; break; }   // 自分のレーンから出るコネクタ
-                    }
-                    // 既にコネクタ上にいるときはprev_laneが自分のlane_idと一致しない
-                    if (conn < 0) conn = conn_any;
-                    if (conn >= 0) {
-                        string conn_turn = prim(1, "turn", conn);   // 型を明示して受ける
-                        s@next_turn = conn_turn;   // 左折・直進も07の候補除外で使う
-                        if (conn_turn == "right") {
+                if (next_idx >= 0) {
+                    // next_turnsは11がnext_lanesと同indexで焼いている（左折・直進も07/06の候補除外で使う）
+                    string nturns[] = prim(1, "next_turns", prim0);
+                    i@nt_baked  = (len(nturns) == n);   // 本数が合わなければ11の焼き直し漏れ
+                    if (i@nt_baked) s@next_turn = nturns[next_idx];
+
+                    if (s@next_turn == "right") {
+                        // ★ 交錯情報はコネクタprimにしか無いので、右折のときだけprimを引く。
+                        //   next_laneは行き先レーン名で別の入口から来たコネクタにも一致するため、
+                        //   入口を特定できるprev_lane（入口のlane_id）で絞る
+                        int conn = -1;
+                        int n_conn = findattribvalcount(1, "prim", "prev_lane", i@lane_id);
+                        for (int k = 0; k < n_conn; k++) {
+                            int c = findattribval(1, "prim", "prev_lane", i@lane_id, k);
+                            if (c < 0 || prim(1, "is_connector", c) != 1) continue;   // 既定値0のprimを弾く
+                            if (prim(1, "next_lane", c) == s@next_lane_name) { conn = c; break; }
+                        }
+                        i@dbg_conn = conn;
+                        if (conn >= 0) {
                             cross_lines_local    = prim(1, "cross_lines",    conn);
                             cross_line_pos_local = prim(1, "cross_line_pos", conn);
                             i@rt_lookahead       = 1;

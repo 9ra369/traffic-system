@@ -115,7 +115,8 @@
 | `turn`(point) | string | `"left"`/`"right"`/`"straight"`。コネクタ区間の点だけが値を持ち、それ以外は既定値 |
 | `lane_id`(point) | int | レーンの一意なID |
 | `lane_index`(point) | int | 内側から数えたレーンの通し番号（旧`num`） |
-| `next_lanes` | string[] | 次に進めるレーン名の候補一覧。入口点にのみ乗る |
+| `next_lanes` | string[] | 次に進めるレーン名の候補一覧。11は入口点に書くが、実ジオメトリではレーンの全点に乗っている |
+| `next_turns`(prim) | string[] | `next_lanes`と同indexの`turn`一覧。11が`candidates`と同じループで焼く（2026-09-22）。03は選んだindexでそのまま`s@next_turn`を引く |
 | `intersection_id` | int | 属する交差点のID（旧`node_id`） |
 | `is_cut_end` | int | 交差点で切られた端点かどうか |
 | `is_entry` | int | 1=入口点／0=出口点（旧`flow`） |
