@@ -8,10 +8,9 @@ i@lane_prim = hitprim;   // 010の横方向補正が寄せる先。見つから�
 
 if (hitprim >= 0) {          // 見つかったか確認
     @u = uvw.x;
-    if (prim(1, "end", hitprim) == 1) {
-        // 行き止まりレーン(15_BAKE_LANE_END.vflで判定済み)の末端に到達 → 車を削除
-        if (uvw.x >= 0.999) removepoint(0, @ptnum);
-    } else if (uvw.x >= 0.99 && s@next_lane_name != "") {
+    // 行き止まりレーンか(15_BAKE_LANE_END.vflで判定済み)。削除は013_KILL_POINTSが行う
+    i@lane_dead_end = prim(1, "end", hitprim);
+    if (i@lane_dead_end != 1 && uvw.x >= 0.99 && s@next_lane_name != "") {
         // next_lane_nameが空のまま切り替えると、03のnearpointが解決できず
         // lane_changedが1で固着し、passed/cross_lines等が前のレーンの値のまま残る。
         // endが0なのにここで止まる車がいたら、next_lanesの引き当て失敗を疑う
@@ -19,15 +18,4 @@ if (hitprim >= 0) {          // 見つかったか確認
         s@lane_name = s@next_lane_name;
         i@lane_changed = 1;
     }
-}
-
-// ── 行き先が無いまま末端に張り付いた車を回収する ──
-// end=1のレーンは上で即削除されるが、next_lanesの引き当てに失敗したレーンはendが
-// 立たず車が残る。hitprim<0でも@uは前フレームの値が残るのでこのブロックは外に置く
-int end_frames = 24;
-if (s@next_lane_name == "" && @u >= 0.98) {
-    i@lane_end_count += 1;
-    if (i@lane_end_count >= end_frames) removepoint(0, @ptnum);
-} else {
-    i@lane_end_count = 0;
 }

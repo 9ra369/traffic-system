@@ -19,6 +19,7 @@
 | [[010_INTEGRATE]] | 速度・位置を積分して更新 |
 | [[011_COLORIZE]] | `car_state`等からビューポート表示色(`Cd`)を決定 |
 | [[012_COLLISION]] | 車同士の点が接触距離（既定0.5m）まで近づいたことを記録し、その車を`Cd`=ピンクで上書き。Solverの最後（011の後ろ）に置くデバッグ表示。接触地点の円は`23_VIZ_COLLISION`がSolverの外で描く |
+| [[013_KILL_POINTS]] | 車を消す処理の集約先。行き止まりレーンの末端に着いた車と、末端に張り付いたまま12フレーム動けない車を削除する（2026-09-23に`02`から分離） |
 | [[11_CONNECT_LANE]] | 道路ネットワーク生成側：交差点の入口/出口点から接続曲線(コネクタ)を作り、`next_lanes`・`cross_lines`等の交差点まわりの属性を配る |
 | [[12_BAKE_CROSS_POS]] | 道路ネットワーク生成側：直進レーンの交錯点座標を`cross_pos`としてRoad Line側（point/prim両方）に焼き込む。従来は車が`lane_changed`時に交錯点ジオメトリへ`nearpoint`していたが、右折車がlane_idキーで直接引けるようにするためのベイク（M6b） |
 
@@ -51,7 +52,7 @@
 
 ## 2. パイプライン概要
 
-01_INIT → 02_CHANGE ROAD → 03_UPDATE_LANE_ATTRIB → 04_SIGNAL DETECT → 05_HUMAN DETECT → 06_CAR DETECT → 07_RESOLVE_CONFLICT → 08_STATE → 09_ACCEL → 010_INTEGRATE → 011_COLORIZE → 012_COLLISION
+01_INIT → 02_CHANGE ROAD → 03_UPDATE_LANE_ATTRIB → 04_SIGNAL DETECT → 05_HUMAN DETECT → 06_CAR DETECT → 07_RESOLVE_CONFLICT → 08_STATE → 09_ACCEL → 010_INTEGRATE → 011_COLORIZE → 012_COLLISION → 013_KILL_POINTS
 
 （`11_CONNECT_LANE` / `12_BAKE_CROSS_POS` は上記と別系統：車両シミュレーション本体ではなく、道路ネットワークジオメトリを事前生成するSOP側の処理。`12_BAKE_CROSS_POS`は`11_CONNECT_LANE`の後段、車Solverより前に1回だけ通す）
 
@@ -77,6 +78,8 @@
 | `lane_id` | int | 現在のレーン（分割・コネクタ生成後の最終スプライン）を一意に識別するID。位置追跡の主キー兼`cross_lines`との照合キー。`lane_changed`時に1回だけ確定し、以後そのレーンにいる間は書き換えない（`src_id`廃止に伴い2026-09-10変更） | 03（`lane_changed`時に確定）, 07 |
 | `u` | float | 現在レーンspline上のパラメトリック位置 | 02 |
 | `lane_prim` | int | 現在乗っているレーンのprim番号。`02`の`xyzdist`が返した`hitprim`をそのまま保持し、`010`の横方向補正が寄せる先のprimを1本に限定するのに使う | 01, 02（毎フレーム更新）, 010 |
+| `lane_dead_end` | int | 今いるレーンが行き止まり（Road Line側の`end`(prim)）か。`02`が`xyzdist`のついでに毎フレーム写し、`013`が末端到達で削除する（2026-09-23） | 01, 02（毎フレーム更新）, 013 |
+| `lane_end_count` | int | `@u`が末端に張り付いたまま何フレーム経ったか。12で削除（2026-09-23に`02`から`013`へ移動） | 01, 013 |
 | `car_state` | int | 0=CRUISING / 1=BRAKING / 2=STOPPED | 01, 08, 09, 010, 011 |
 | `yellow_commit` | int | 黄信号を止まらず通過するとコミット済みか（旧`go`） | 01, 08 |
 | `yellow_judged` | int | 今回の黄信号での可否判定を済ませたか。**01_INITでの初期化なし**（暗黙の0初期値に依存） | 08 |
