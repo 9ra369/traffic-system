@@ -1,8 +1,9 @@
 // ════════════════════════════════════════════════════
 // CAR DETECT: 前方の最近傍車両（同レーン先行車 + 交差/右左折車）
-// 書く: i@car_ptnum, f@dist_to_car, f@car_vel, i@car_signal, i@car_is_cross, i@car_stalled
+// 書く: i@car_ptnum, i@car_id, f@dist_to_car, f@car_vel, i@car_signal, i@car_is_cross, i@car_stalled
 // ════════════════════════════════════════════════════
 i@car_ptnum    = -1;
+i@car_id       = -1;   // ptnumはSolver内の削除でズレる。Solverの外はこちらで引く
 f@dist_to_car  = 9999.0;
 f@car_vel      = 0.0;
 i@car_signal   = -1;
@@ -101,6 +102,7 @@ foreach(int pt; pts) {
     if (d < f@dist_to_car) {
         f@dist_to_car  = d;
         i@car_ptnum    = pt;
+        i@car_id       = point(0, "id", pt);
         i@car_is_cross = is_cross;
         i@car_stalled  = is_stalled;
 

@@ -118,11 +118,17 @@ if (i@ctrl_src == 0) {
         if (dk < best) { best = dk; target = opp_p; src = 2; found = 1; }
     }
 
-} else if (i@car_ptnum >= 0 && i@car_ptnum < npoints(0)) {
+} else if (i@car_ptnum >= 0) {
     // 停止対象より前車が近い（08は早期returnしてIDMに任せている）
-    target = point(0, "P", i@car_ptnum);
-    src    = i@car_is_cross == 1 ? 1 : 0;
-    found  = 1;
+    // ★ 013_KILL_POINTSが点を消したフレームはptnumが詰められ別の車を指すので、06が
+    //   控えたidで引き直す。car_idが無い（=06が古い）と全車がid=0の1台を指すので描かない
+    int lead = haspointattrib(0, "car_id")
+             ? findattribval(0, "point", "id", i@car_id) : -1;
+    if (lead >= 0) {
+        target = point(0, "P", lead);
+        src    = i@car_is_cross == 1 ? 1 : 0;
+        found  = 1;
+    }
 }
 
 if (found) {
